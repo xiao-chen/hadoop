@@ -25,6 +25,9 @@ Release 2.6.1 - UNRELEASED
     HADOOP-11368. Fix SSLFactory truststore reloader thread leak in
     KMSClientProvider. (Arun Suresh via wang)
 
+    HADOOP-11238. Update the NameNode's Group Cache in the background when
+    possible (Chris Li via Colin P. McCabe)
+
 Release 2.6.0 - 2014-11-18
 
   INCOMPATIBLE CHANGES
