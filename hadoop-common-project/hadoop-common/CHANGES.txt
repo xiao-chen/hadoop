@@ -8,6 +8,9 @@ Release 2.6.1 - UNRELEASED
 
   IMPROVEMENTS
 
+    HADOOP-11506. Configuration variable expansion regex expensive for long
+    values. (Gera Shegalov via gera)
+
   OPTIMIZATIONS
 
   BUG FIXES
