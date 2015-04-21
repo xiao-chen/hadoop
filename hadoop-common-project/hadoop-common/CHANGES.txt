@@ -11,6 +11,9 @@ Release 2.6.1 - UNRELEASED
     HADOOP-11506. Configuration variable expansion regex expensive for long
     values. (Gera Shegalov via gera)
 
+    HADOOP-11812. Implement listLocatedStatus for ViewFileSystem to speed up
+    split calculation (gera)
+
   OPTIMIZATIONS
 
   BUG FIXES
