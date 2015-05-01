@@ -57,6 +57,9 @@ Release 2.6.1 - UNRELEASED
 
     HADOOP-10786. Fix UGI#reloginFromKeytab on Java 8. (Stephen Chu via wheat9)
 
+    HADOOP-11491. HarFs incorrectly declared as requiring an authority.
+    (Brahma Reddy Battula via gera)
+
 Release 2.6.0 - 2014-11-18
 
   INCOMPATIBLE CHANGES
