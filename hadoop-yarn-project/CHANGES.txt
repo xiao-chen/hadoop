@@ -190,6 +190,9 @@ Release 2.8.0 - UNRELEASED
     YARN-2884. Added a proxy service in NM to proxy the the communication
     between AM and RM. (Kishore Chaliparambil via jianhe) 
 
+    YARN-3866. AM-RM protocol changes to support container resizing. (Meng Ding
+    via jianhe)
+
   IMPROVEMENTS
 
     YARN-644. Basic null check is not performed on passed in arguments before
