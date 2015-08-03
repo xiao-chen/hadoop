@@ -83,6 +83,7 @@ public class NodeManager extends CompositeService
   public static final int SHUTDOWN_HOOK_PRIORITY = 30;
 
   private static final Log LOG = LogFactory.getLog(NodeManager.class);
+  private static long nmStartupTime = System.currentTimeMillis();
   protected final NodeManagerMetrics metrics = NodeManagerMetrics.create();
   private ApplicationACLsManager aclsManager;
   private NodeHealthCheckerService nodeHealthChecker;
@@ -102,6 +103,10 @@ public class NodeManager extends CompositeService
 
   public NodeManager() {
     super(NodeManager.class.getName());
+  }
+
+  public static long getNMStartupTime() {
+    return nmStartupTime;
   }
 
   protected NodeStatusUpdater createNodeStatusUpdater(Context context,
