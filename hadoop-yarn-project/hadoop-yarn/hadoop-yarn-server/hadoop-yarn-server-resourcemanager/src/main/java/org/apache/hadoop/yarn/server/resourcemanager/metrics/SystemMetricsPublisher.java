@@ -120,7 +120,8 @@ public class SystemMetricsPublisher extends CompositeService {
               app.getUser(),
               app.getQueue(),
               app.getSubmitTime(),
-              createdTime, app.getApplicationTags()));
+              createdTime, app.getApplicationTags(),
+              app.getApplicationSubmissionContext().getUnmanagedAM()));
     }
   }
 

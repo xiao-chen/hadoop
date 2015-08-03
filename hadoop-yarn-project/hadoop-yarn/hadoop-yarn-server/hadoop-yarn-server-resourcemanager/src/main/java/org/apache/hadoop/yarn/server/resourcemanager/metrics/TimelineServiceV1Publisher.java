@@ -71,6 +71,9 @@ public class TimelineServiceV1Publisher extends
         event.getSubmittedTime());
     entityInfo.put(ApplicationMetricsConstants.APP_TAGS_INFO,
         event.getAppTags());
+    entityInfo.put(
+        ApplicationMetricsConstants.UNMANAGED_APPLICATION_ENTITY_INFO,
+        event.isUnmanagedApp());
     entity.setOtherInfo(entityInfo);
 
     TimelineEvent tEvent = new TimelineEvent();
