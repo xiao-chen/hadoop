@@ -122,6 +122,21 @@ public class FSDirectory implements Closeable {
   public final static byte[] DOT_INODES = 
       DFSUtil.string2Bytes(DOT_INODES_STRING);
 
+  public final static HdfsFileStatus DOT_RESERVED_STATUS =
+      new HdfsFileStatus(0, true, 0, 0, 0, 0, new FsPermission((short) 770),
+          null, null, null, HdfsFileStatus.EMPTY_NAME, -1L, 0, null,
+          HdfsConstants.BLOCK_STORAGE_POLICY_ID_UNSPECIFIED);
+
+  public final static HdfsFileStatus RAW_STATUS =
+      new HdfsFileStatus(0, true, 0, 0, 0, 0, new FsPermission((short) 770),
+          null, null, null, RAW, -1L, 0, null,
+          HdfsConstants.BLOCK_STORAGE_POLICY_ID_UNSPECIFIED);
+
+  public final static HdfsFileStatus INODES_STATUS =
+      new HdfsFileStatus(0, true, 0, 0, 0, 0, new FsPermission((short) 770),
+          null, null, null, DOT_INODES, -1L, 0, null,
+          HdfsConstants.BLOCK_STORAGE_POLICY_ID_UNSPECIFIED);
+
   INodeDirectory rootDir;
   private final FSNamesystem namesystem;
   private volatile boolean skipQuotaCheck = false; //skip while consuming edits
