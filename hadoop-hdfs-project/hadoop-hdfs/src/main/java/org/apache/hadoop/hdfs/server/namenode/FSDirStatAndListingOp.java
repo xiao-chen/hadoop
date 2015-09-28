@@ -227,7 +227,7 @@ class FSDirStatAndListingOp {
     String srcs = FSDirectory.normalizePath(src);
     final boolean isRawPath = FSDirectory.isReservedRawName(src);
     if (FSDirectory.isReservedName(srcs)) {
-      return getReservedListing();
+      return getReservedListing(fsd);
     }
 
     fsd.readLock();
@@ -342,8 +342,8 @@ class FSDirStatAndListingOp {
    *
    * todo
    */
-  private static DirectoryListing getReservedListing() {
-    final HdfsFileStatus listing[] = { FSDirectory.INODES_STATUS, FSDirectory.RAW_STATUS };
+  private static DirectoryListing getReservedListing(FSDirectory fsd) {
+    final HdfsFileStatus listing[] = { fsd.INODES_STATUS, fsd.RAW_STATUS };
     return new DirectoryListing(listing, 0);
   }
 

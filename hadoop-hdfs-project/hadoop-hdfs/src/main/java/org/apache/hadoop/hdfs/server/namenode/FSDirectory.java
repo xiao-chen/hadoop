@@ -123,19 +123,12 @@ public class FSDirectory implements Closeable {
       DFSUtil.string2Bytes(DOT_INODES_STRING);
 
   public final static HdfsFileStatus DOT_RESERVED_STATUS =
-      new HdfsFileStatus(0, true, 0, 0, 0, 0, new FsPermission((short) 770),
+      new HdfsFileStatus(0, true, 0, 0, 0, 0, new FsPermission((short) 01770),
           null, null, null, HdfsFileStatus.EMPTY_NAME, -1L, 0, null,
           HdfsConstants.BLOCK_STORAGE_POLICY_ID_UNSPECIFIED);
 
-  public final static HdfsFileStatus RAW_STATUS =
-      new HdfsFileStatus(0, true, 0, 0, 0, 0, new FsPermission((short) 770),
-          null, null, null, RAW, -1L, 0, null,
-          HdfsConstants.BLOCK_STORAGE_POLICY_ID_UNSPECIFIED);
-
-  public final static HdfsFileStatus INODES_STATUS =
-      new HdfsFileStatus(0, true, 0, 0, 0, 0, new FsPermission((short) 770),
-          null, null, null, DOT_INODES, -1L, 0, null,
-          HdfsConstants.BLOCK_STORAGE_POLICY_ID_UNSPECIFIED);
+  public final HdfsFileStatus INODES_STATUS;
+  public final HdfsFileStatus RAW_STATUS;
 
   INodeDirectory rootDir;
   private final FSNamesystem namesystem;
@@ -308,9 +301,8 @@ public class FSDirectory implements Closeable {
     // to 64MB. This means we can only store approximately 6.7 million entries
     // per directory, but let's use 6.4 million for some safety.
     final int MAX_DIR_ITEMS = 64 * 100 * 1000;
-    Preconditions.checkArgument(
-        maxDirItems > 0 && maxDirItems <= MAX_DIR_ITEMS, "Cannot set "
-            + DFSConfigKeys.DFS_NAMENODE_MAX_DIRECTORY_ITEMS_KEY
+    Preconditions.checkArgument(maxDirItems > 0 && maxDirItems <= MAX_DIR_ITEMS,
+        "Cannot set " + DFSConfigKeys.DFS_NAMENODE_MAX_DIRECTORY_ITEMS_KEY
             + " to a value less than 1 or greater than " + MAX_DIR_ITEMS);
 
     int threshold = conf.getInt(
@@ -326,6 +318,18 @@ public class FSDirectory implements Closeable {
     this.quotaInitThreads = conf.getInt(
         DFSConfigKeys.DFS_NAMENODE_QUOTA_INIT_THREADS_KEY,
         DFSConfigKeys.DFS_NAMENODE_QUOTA_INIT_THREADS_DEFAULT);
+
+    INODES_STATUS =
+        new HdfsFileStatus(0, true, 0, 0, ns.getStartTime().getTime(), 0,
+            new FsPermission((short) 01770), null, null, null, DOT_INODES, -1L, 0,
+            null, HdfsConstants.BLOCK_STORAGE_POLICY_ID_UNSPECIFIED);
+
+    RAW_STATUS =
+        new HdfsFileStatus(0, true, 0, 0, ns.getStartTime().getTime(), 0,
+            new FsPermission((short) 01770), null,
+            conf.get(DFSConfigKeys.DFS_PERMISSIONS_SUPERUSERGROUP_KEY), null,
+            RAW, -1L, 0, null,
+            HdfsConstants.BLOCK_STORAGE_POLICY_ID_UNSPECIFIED);
   }
     
   FSNamesystem getFSNamesystem() {

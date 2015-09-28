@@ -1526,6 +1526,7 @@ public class TestDFSShell {
     assertEquals(2, stats.length);
     assertEquals(FSDirectory.DOT_INODES_STRING, stats[0].getPath().getName());
     assertEquals("raw", stats[1].getPath().getName());
+    assertEquals(conf.get(DFSConfigKeys.DFS_PERMISSIONS_SUPERUSERGROUP_KEY), stats[1].getGroup());
 
     stats = fs.listStatus(new Path("/.reserved"));
     assertEquals(2, stats.length);
