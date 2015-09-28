@@ -41,6 +41,7 @@ import org.apache.hadoop.hdfs.protocol.Block;
 import org.apache.hadoop.hdfs.protocol.BlockListAsLongs;
 import org.apache.hadoop.hdfs.server.datanode.DataNode;
 import org.apache.hadoop.hdfs.server.datanode.DataNodeTestUtils;
+import org.apache.hadoop.hdfs.server.namenode.FSDirectory;
 import org.apache.hadoop.hdfs.server.protocol.DatanodeStorage;
 import org.apache.hadoop.hdfs.tools.DFSAdmin;
 import org.apache.hadoop.io.IOUtils;
@@ -187,7 +188,7 @@ public class TestDFSShell {
 	  MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf).numDataNodes(2).build();
 	  FileSystem fs = cluster.getFileSystem();
 	  assertTrue("Not a HDFS: " + fs.getUri(),
-			  fs instanceof DistributedFileSystem);
+        fs instanceof DistributedFileSystem);
 	  try {
       fs.mkdirs(new Path(new Path("parent"), "child"));
       try {
@@ -314,8 +315,8 @@ public class TestDFSShell {
     Configuration conf = new HdfsConfiguration();
     MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf).numDataNodes(2).build();
     FileSystem fs = cluster.getFileSystem();
-    assertTrue("Not a HDFS: "+fs.getUri(),
-               fs instanceof DistributedFileSystem);
+    assertTrue("Not a HDFS: " + fs.getUri(),
+        fs instanceof DistributedFileSystem);
     final DistributedFileSystem dfs = (DistributedFileSystem)fs;
 
     try {
@@ -969,7 +970,7 @@ public class TestDFSShell {
     try {
       int exitCode;
       exitCode = shell.run(args);
-      LOG.info("RUN: "+args[0]+" exit=" + exitCode);
+      LOG.info("RUN: " + args[0] + " exit=" + exitCode);
       return exitCode;
     } catch (IOException e) {
       LOG.error("RUN: "+args[0]+" IOException="+e.getMessage());
@@ -1151,8 +1152,8 @@ public class TestDFSShell {
      * Make sure that we create ChecksumDFS */
     MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf).numDataNodes(2).build();
     FileSystem fs = cluster.getFileSystem();
-    assertTrue("Not a HDFS: "+fs.getUri(),
-            fs instanceof DistributedFileSystem);
+    assertTrue("Not a HDFS: " + fs.getUri(),
+        fs instanceof DistributedFileSystem);
     DistributedFileSystem fileSys = (DistributedFileSystem)fs;
     FsShell shell = new FsShell();
     shell.setConf(conf);
@@ -1505,6 +1506,40 @@ public class TestDFSShell {
       }
       cluster.shutdown();
     }
+  }
+
+
+  @Test // (timeout = 30000)
+  public void testListReserved() throws IOException {
+    Configuration conf = new HdfsConfiguration();
+    MiniDFSCluster cluster =
+        new MiniDFSCluster.Builder(conf).numDataNodes(2).build();
+    FileSystem fs = cluster.getFileSystem();
+    FsShell shell = new FsShell();
+    shell.setConf(conf);
+
+    FileStatus test = fs.getFileStatus(new Path("/.reserved"));
+    assertEquals(FSDirectory.DOT_RESERVED_STRING, test.getPath().getName());
+
+    // Listing /.reserved/ or /.reserved should show 2 items: raw and .inodes
+    FileStatus[] stats = fs.listStatus(new Path("/.reserved/"));
+    assertEquals(2, stats.length);
+    assertEquals(FSDirectory.DOT_INODES_STRING, stats[0].getPath().getName());
+    assertEquals("raw", stats[1].getPath().getName());
+
+    stats = fs.listStatus(new Path("/.reserved"));
+    assertEquals(2, stats.length);
+    assertEquals(FSDirectory.DOT_INODES_STRING, stats[0].getPath().getName());
+    assertEquals("raw", stats[1].getPath().getName());
+
+    // Listing / should not show /.reserved
+    stats = fs.listStatus(new Path("/"));
+    assertEquals(0, stats.length);
+
+    runCmd(shell, "-ls", "/.reserved");
+    runCmd(shell, "-ls", "/.reserved/");
+
+    cluster.shutdown();
   }
 
   static List<File> getBlockFiles(MiniDFSCluster cluster) throws IOException {
