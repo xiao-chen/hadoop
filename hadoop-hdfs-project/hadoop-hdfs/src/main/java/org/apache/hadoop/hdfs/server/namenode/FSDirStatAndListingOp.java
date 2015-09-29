@@ -226,7 +226,7 @@ class FSDirStatAndListingOp {
       throws IOException {
     String srcs = FSDirectory.normalizePath(src);
     final boolean isRawPath = FSDirectory.isReservedRawName(src);
-    if (FSDirectory.isReservedName(srcs)) {
+    if (FSDirectory.isExactReservedName(srcs)) {
       return getReservedListing(fsd);
     }
 
@@ -339,8 +339,9 @@ class FSDirStatAndListingOp {
   }
 
   /**
-   *
-   * todo
+   * Get a listing of of the /.reserved directory.
+   * @param fsd FSDirectory
+   * @return listing containing child directories of /.reserved
    */
   private static DirectoryListing getReservedListing(FSDirectory fsd) {
     final HdfsFileStatus listing[] = { fsd.INODES_STATUS, fsd.RAW_STATUS };
@@ -383,7 +384,7 @@ class FSDirStatAndListingOp {
       FSDirectory fsd, String src, boolean resolveLink, boolean isRawPath)
     throws IOException {
     String srcs = FSDirectory.normalizePath(src);
-    if (FSDirectory.isReservedName(src))
+    if (FSDirectory.isExactReservedName(src))
       return FSDirectory.DOT_RESERVED_STATUS;
 
     if (srcs.endsWith(HdfsConstants.SEPARATOR_DOT_SNAPSHOT_DIR)) {

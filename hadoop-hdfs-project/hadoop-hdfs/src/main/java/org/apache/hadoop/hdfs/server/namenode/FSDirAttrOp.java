@@ -51,6 +51,9 @@ public class FSDirAttrOp {
       FSDirectory fsd, final String srcArg, FsPermission permission)
       throws IOException {
     String src = srcArg;
+    if (FSDirectory.isExactReservedName(src)) { //TODO: allow child?
+      throw new InvalidPathException(src);
+    }
     FSPermissionChecker pc = fsd.getPermissionChecker();
     byte[][] pathComponents = FSDirectory.getPathComponentsForReservedPath(src);
     INodesInPath iip;
@@ -70,6 +73,9 @@ public class FSDirAttrOp {
   static HdfsFileStatus setOwner(
       FSDirectory fsd, String src, String username, String group)
       throws IOException {
+    if (FSDirectory.isExactReservedName(src)) { //TODO: allow child?
+      throw new InvalidPathException(src);
+    }
     FSPermissionChecker pc = fsd.getPermissionChecker();
     byte[][] pathComponents = FSDirectory.getPathComponentsForReservedPath(src);
     INodesInPath iip;

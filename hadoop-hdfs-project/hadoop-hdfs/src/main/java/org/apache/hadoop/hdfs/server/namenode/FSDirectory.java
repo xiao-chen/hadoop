@@ -1279,13 +1279,22 @@ public class FSDirectory implements Closeable {
 
   /** Check if a given path is reserved */
   public static boolean isReservedName(String src) {
-    return src.startsWith(DOT_RESERVED_PATH_PREFIX + Path.SEPARATOR)
+    return src.startsWith(DOT_RESERVED_PATH_PREFIX + Path.SEPARATOR);
+  }
+
+  public static boolean isExactReservedName(String src) {
+    return src.equals(DOT_RESERVED_PATH_PREFIX + Path.SEPARATOR)
         || src.equals(DOT_RESERVED_PATH_PREFIX);
   }
 
   static boolean isReservedRawName(String src) {
     return src.startsWith(DOT_RESERVED_PATH_PREFIX +
         Path.SEPARATOR + RAW_STRING);
+  }
+
+  static boolean isReservedInodesName(String src) {
+    return src.startsWith(DOT_RESERVED_PATH_PREFIX +
+        Path.SEPARATOR + DOT_INODES_STRING);
   }
 
   /**

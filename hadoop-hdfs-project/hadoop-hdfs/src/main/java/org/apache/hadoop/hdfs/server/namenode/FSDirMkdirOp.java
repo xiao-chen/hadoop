@@ -50,6 +50,11 @@ class FSDirMkdirOp {
     if (!DFSUtil.isValidName(src)) {
       throw new InvalidPathException(src);
     }
+
+    if (FSDirectory.isExactReservedName(src)) {
+      throw new InvalidPathException(src);
+    }
+
     FSPermissionChecker pc = fsd.getPermissionChecker();
     byte[][] pathComponents = FSDirectory.getPathComponentsForReservedPath(src);
     fsd.writeLock();

@@ -347,6 +347,12 @@ class FSDirWriteFileOp {
           " already exists as a directory");
     }
 
+    if (FSDirectory.isExactReservedName(src) || (FSDirectory.isReservedName(src)
+        && !FSDirectory.isReservedRawName(src) && !FSDirectory
+        .isReservedInodesName(src)) ) {
+      throw new InvalidPathException(src);
+    }
+
     final INodeFile myFile = INodeFile.valueOf(inode, src, true);
     if (fsd.isPermissionEnabled()) {
       if (overwrite && myFile != null) {

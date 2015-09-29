@@ -42,13 +42,14 @@ class FSDirSymlinkOp {
     if (!DFSUtil.isValidName(link)) {
       throw new InvalidPathException("Invalid link name: " + link);
     }
-    if (FSDirectory.isReservedName(target) || target.isEmpty()) {
-      throw new InvalidPathException("Invalid target name: " + target);
-    }
-
     if (NameNode.stateChangeLog.isDebugEnabled()) {
       NameNode.stateChangeLog.debug("DIR* NameSystem.createSymlink: target="
           + target + " link=" + link);
+    }
+
+    if (FSDirectory.isReservedName(target) || target.isEmpty() || FSDirectory
+        .isExactReservedName(target)) {
+      throw new InvalidPathException("Invalid target name: " + target);
     }
 
     FSPermissionChecker pc = fsn.getPermissionChecker();

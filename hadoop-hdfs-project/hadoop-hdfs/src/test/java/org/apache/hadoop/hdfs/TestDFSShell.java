@@ -1537,9 +1537,223 @@ public class TestDFSShell {
     stats = fs.listStatus(new Path("/"));
     assertEquals(0, stats.length);
 
-    runCmd(shell, "-ls", "/.reserved");
-    runCmd(shell, "-ls", "/.reserved/");
+    // runCmd prints error into System.err, thus verify from there.
+    PrintStream syserr = System.err;
+    final ByteArrayOutputStream baos = new ByteArrayOutputStream();
+    PrintStream ps = new PrintStream(baos);
+    System.setErr(ps);
 
+    runCmd(shell, "-ls", "/.reserved");
+    String str = ps.toString();
+    assertEquals(0, baos.toString().length());
+
+    baos.reset();
+    runCmd(shell, "-ls", "/.reserved/");
+    assertEquals(0, baos.toString().length());
+
+    System.setErr(syserr);
+    cluster.shutdown();
+  }
+
+  @Test
+  public void testMkdirReserved() throws IOException {
+    Configuration conf = new HdfsConfiguration();
+    MiniDFSCluster cluster =
+        new MiniDFSCluster.Builder(conf).numDataNodes(2).build();
+    FileSystem fs = cluster.getFileSystem();
+
+    try {
+      fs.mkdirs(new Path("/.reserved"));
+      fail("Can't mkdir /.reserved");
+    } catch (Exception e) {
+      // Expected, InvalidPathException thrown from remote
+      assertTrue(e.getMessage().contains("Invalid path name /.reserved"));
+    }
+
+    try {
+      fs.mkdirs(new Path("/.reserved/"));
+      fail("Can't mkdir /.reserved/");
+    } catch (Exception e) {
+      // Expected, InvalidPathException thrown from remote
+      assertTrue(e.getMessage().contains("Invalid path name /.reserved"));
+    }
+    cluster.shutdown();
+  }
+
+  @Test
+  public void testRmReserved() throws IOException {
+    Configuration conf = new HdfsConfiguration();
+    MiniDFSCluster cluster =
+        new MiniDFSCluster.Builder(conf).numDataNodes(2).build();
+    FileSystem fs = cluster.getFileSystem();
+
+    try {
+      fs.delete(new Path("/.reserved"), false);
+      fail("Can't delete /.reserved");
+    } catch (Exception e) {
+      // Expected, InvalidPathException thrown from remote
+      assertTrue(e.getMessage().contains("Invalid path name /.reserved"));
+    }
+
+    try {
+      fs.delete(new Path("/.reserved"), true);
+      fail("Can't delete /.reserved");
+    } catch (Exception e) {
+      // Expected, InvalidPathException thrown from remote
+      assertTrue(e.getMessage().contains("Invalid path name /.reserved"));
+    }
+
+    try {
+      fs.delete(new Path("/.reserved/"), false);
+      fail("Can't delete /.reserved/");
+    } catch (Exception e) {
+      // Expected, InvalidPathException thrown from remote
+      assertTrue(e.getMessage().contains("Invalid path name /.reserved"));
+    }
+
+    try {
+      fs.delete(new Path("/.reserved/"), true);
+      fail("Can't delete /.reserved/");
+    } catch (Exception e) {
+      // Expected, InvalidPathException thrown from remote
+      assertTrue(e.getMessage().contains("Invalid path name /.reserved"));
+    }
+    cluster.shutdown();
+  }
+
+  @Test
+  public void testCopyReserved() throws IOException {
+    Configuration conf = new HdfsConfiguration();
+    MiniDFSCluster cluster =
+        new MiniDFSCluster.Builder(conf).numDataNodes(2).build();
+    FileSystem fs = cluster.getFileSystem();
+
+    final File localFile = new File(TEST_ROOT_DIR, "testFileForPut");
+    final String localfilepath =
+        new Path(localFile.getAbsolutePath()).toUri().toString();
+    final String testdir = "/tmp/TestDFSShell-testCopyReserved";
+    final Path hdfsTestDir = new Path(testdir);
+
+    localFile.createNewFile();
+    writeFile(fs, new Path(testdir, "testFileForPut"));
+
+    try {
+      fs.copyFromLocalFile(new Path(localfilepath), new Path("/.reserved"));
+      fail("Can't copyFromLocal to /.reserved");
+    } catch (Exception e) {
+      // Expected, InvalidPathException thrown from remote
+      assertTrue(e.getMessage().contains("Invalid path name /.reserved"));
+    }
+
+    FsShell shell = new FsShell();
+    shell.setConf(conf);
+    Path src = new Path(hdfsTestDir, "srcfile");
+    fs.create(src).close();
+    assertTrue(fs.exists(src));
+
+    // runCmd prints error into System.err, thus verify from there.
+    PrintStream syserr = System.err;
+    final ByteArrayOutputStream baos = new ByteArrayOutputStream();
+    PrintStream ps = new PrintStream(baos);
+    System.setErr(ps);
+
+    runCmd(shell, "-cp", src.toString(), "/.reserved");
+    assertTrue(baos.toString().contains("Invalid path name /.reserved"));
+
+    baos.reset();
+    runCmd(shell, "-cp", src.toString(), "/.reserved/");
+    assertTrue(baos.toString().contains("Invalid path name /.reserved"));
+
+    System.setErr(syserr);
+    cluster.shutdown();
+  }
+
+  @Test
+  public void testDistcpReserved() throws IOException {
+
+  }
+
+  @Test
+  public void testChmodReserved() throws IOException {
+    Configuration conf = new HdfsConfiguration();
+    MiniDFSCluster cluster =
+        new MiniDFSCluster.Builder(conf).numDataNodes(2).build();
+    FileSystem fs = cluster.getFileSystem();
+    FsShell shell = new FsShell();
+    shell.setConf(conf);
+
+    // runCmd prints error into System.err, thus verify from there.
+    PrintStream syserr = System.err;
+    final ByteArrayOutputStream baos = new ByteArrayOutputStream();
+    PrintStream ps = new PrintStream(baos);
+    System.setErr(ps);
+
+    runCmd(shell, "-chmod", "777", "/.reserved");
+    assertTrue(baos.toString().contains("Invalid path name /.reserved"));
+
+    baos.reset();
+    runCmd(shell, "-chmod", "555", "/.reserved/");
+    assertTrue(baos.toString().contains("Invalid path name /.reserved"));
+
+    System.setErr(syserr);
+    cluster.shutdown();
+  }
+
+  @Test
+  public void testChownReserved() throws IOException {
+    Configuration conf = new HdfsConfiguration();
+    MiniDFSCluster cluster =
+        new MiniDFSCluster.Builder(conf).numDataNodes(2).build();
+    FileSystem fs = cluster.getFileSystem();
+    FsShell shell = new FsShell();
+    shell.setConf(conf);
+
+    // runCmd prints error into System.err, thus verify from there.
+    PrintStream syserr = System.err;
+    final ByteArrayOutputStream baos = new ByteArrayOutputStream();
+    PrintStream ps = new PrintStream(baos);
+    System.setErr(ps);
+
+    runCmd(shell, "-chown", "user1", "/.reserved");
+    assertTrue(baos.toString().contains("Invalid path name /.reserved"));
+
+    baos.reset();
+    runCmd(shell, "-chown", "dummy", "/.reserved/");
+    assertTrue(baos.toString().contains("Invalid path name /.reserved"));
+
+    System.setErr(syserr);
+    cluster.shutdown();
+  }
+
+  @Test
+  public void testLsrReserved() {
+
+  }
+
+  @Test
+  // from SymlinkBaseTest.java
+  public void testSymLinkReserved() throws IOException {
+    Configuration conf = new HdfsConfiguration();
+    MiniDFSCluster cluster =
+        new MiniDFSCluster.Builder(conf).numDataNodes(2).build();
+    FileSystem fs = cluster.getFileSystem();
+
+    Path target = new Path("/.reserved");
+    try {
+      fs.createSymlink(target, new Path("/rl1"), false);
+      fail("Can't create symlink to reserved");
+    } catch (Exception e) {
+      // Expected, InvalidPathException thrown from remote
+      assertTrue(e.getMessage().contains("Invalid target name: /.reserved"));
+    }
+
+    try {
+      fs.createSymlink(target, new Path("/.reserved/"), false);
+      fail("Can't create symlink to empty string");
+    } catch (Exception e) {
+      // Expected, InvalidPathException thrown from remote
+      assertTrue(e.getMessage().contains("Invalid target name: /.reserved"));
+    }
     cluster.shutdown();
   }
 
