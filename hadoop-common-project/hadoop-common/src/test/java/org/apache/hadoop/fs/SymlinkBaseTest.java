@@ -1430,22 +1430,4 @@ public abstract class SymlinkBaseTest {
     }
     assertEquals(at, wrapper.getFileLinkStatus(link).getAccessTime());
   }
-
-  @Test(timeout=10000)
-  /** Test create a link to reserved path */
-  public void testCreateLinkToReserved() throws IOException {
-    Path link = new Path("/.reserved");
-    try {
-      wrapper.createSymlink(null, link, false);
-      fail("Can't create symlink to reserved");
-    } catch (InvalidPathException e) {
-      // Expected, Invalid target name: /.reserved
-    }
-    try {
-      wrapper.createSymlink(new Path("/.reserved/"), link, false);
-      fail("Can't create symlink to empty string");
-    } catch (InvalidPathException e) {
-      // Expected, Invalid target name: /.reserved/
-    }
-  }
 }

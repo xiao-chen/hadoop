@@ -319,17 +319,17 @@ public class FSDirectory implements Closeable {
         DFSConfigKeys.DFS_NAMENODE_QUOTA_INIT_THREADS_KEY,
         DFSConfigKeys.DFS_NAMENODE_QUOTA_INIT_THREADS_DEFAULT);
 
-    INODES_STATUS =
-        new HdfsFileStatus(0, true, 0, 0, ns.getStartTime().getTime(), 0,
-            new FsPermission((short) 01770), null, null, null, DOT_INODES, -1L, 0,
-            null, HdfsConstants.BLOCK_STORAGE_POLICY_ID_UNSPECIFIED);
+    //TODO format time?
+    INODES_STATUS = new HdfsFileStatus(0, true, 0, 0,
+        ns.getStartTime() == null ? 0 : ns.getFSImage().getStorage().getCTime(), 0,
+        new FsPermission((short) 01770), null, null, null, DOT_INODES, -1L, 0,
+        null, HdfsConstants.BLOCK_STORAGE_POLICY_ID_UNSPECIFIED);
 
-    RAW_STATUS =
-        new HdfsFileStatus(0, true, 0, 0, ns.getStartTime().getTime(), 0,
-            new FsPermission((short) 01770), null,
-            conf.get(DFSConfigKeys.DFS_PERMISSIONS_SUPERUSERGROUP_KEY), null,
-            RAW, -1L, 0, null,
-            HdfsConstants.BLOCK_STORAGE_POLICY_ID_UNSPECIFIED);
+    RAW_STATUS = new HdfsFileStatus(0, true, 0, 0,
+        ns.getStartTime() == null ? 0 : ns.getFSImage().getStorage().getCTime(), 0,
+        new FsPermission((short) 01770), null,
+        conf.get(DFSConfigKeys.DFS_PERMISSIONS_SUPERUSERGROUP_KEY), null, RAW,
+        -1L, 0, null, HdfsConstants.BLOCK_STORAGE_POLICY_ID_UNSPECIFIED);
   }
     
   FSNamesystem getFSNamesystem() {
@@ -1283,8 +1283,7 @@ public class FSDirectory implements Closeable {
   }
 
   public static boolean isExactReservedName(String src) {
-    return src.equals(DOT_RESERVED_PATH_PREFIX + Path.SEPARATOR)
-        || src.equals(DOT_RESERVED_PATH_PREFIX);
+    return src.equals(DOT_RESERVED_PATH_PREFIX);
   }
 
   static boolean isReservedRawName(String src) {

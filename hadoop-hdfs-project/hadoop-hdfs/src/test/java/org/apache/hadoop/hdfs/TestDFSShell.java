@@ -1521,17 +1521,12 @@ public class TestDFSShell {
     FileStatus test = fs.getFileStatus(new Path("/.reserved"));
     assertEquals(FSDirectory.DOT_RESERVED_STRING, test.getPath().getName());
 
-    // Listing /.reserved/ or /.reserved should show 2 items: raw and .inodes
-    FileStatus[] stats = fs.listStatus(new Path("/.reserved/"));
+    // Listing /.reserved/ should show 2 items: raw and .inodes
+    FileStatus[] stats = fs.listStatus(new Path("/.reserved"));
     assertEquals(2, stats.length);
     assertEquals(FSDirectory.DOT_INODES_STRING, stats[0].getPath().getName());
     assertEquals("raw", stats[1].getPath().getName());
     assertEquals(conf.get(DFSConfigKeys.DFS_PERMISSIONS_SUPERUSERGROUP_KEY), stats[1].getGroup());
-
-    stats = fs.listStatus(new Path("/.reserved"));
-    assertEquals(2, stats.length);
-    assertEquals(FSDirectory.DOT_INODES_STRING, stats[0].getPath().getName());
-    assertEquals("raw", stats[1].getPath().getName());
 
     // Listing / should not show /.reserved
     stats = fs.listStatus(new Path("/"));
@@ -1545,10 +1540,6 @@ public class TestDFSShell {
 
     runCmd(shell, "-ls", "/.reserved");
     String str = ps.toString();
-    assertEquals(0, baos.toString().length());
-
-    baos.reset();
-    runCmd(shell, "-ls", "/.reserved/");
     assertEquals(0, baos.toString().length());
 
     System.setErr(syserr);
@@ -1570,13 +1561,6 @@ public class TestDFSShell {
       assertTrue(e.getMessage().contains("Invalid path name /.reserved"));
     }
 
-    try {
-      fs.mkdirs(new Path("/.reserved/"));
-      fail("Can't mkdir /.reserved/");
-    } catch (Exception e) {
-      // Expected, InvalidPathException thrown from remote
-      assertTrue(e.getMessage().contains("Invalid path name /.reserved"));
-    }
     cluster.shutdown();
   }
 
@@ -1598,22 +1582,6 @@ public class TestDFSShell {
     try {
       fs.delete(new Path("/.reserved"), true);
       fail("Can't delete /.reserved");
-    } catch (Exception e) {
-      // Expected, InvalidPathException thrown from remote
-      assertTrue(e.getMessage().contains("Invalid path name /.reserved"));
-    }
-
-    try {
-      fs.delete(new Path("/.reserved/"), false);
-      fail("Can't delete /.reserved/");
-    } catch (Exception e) {
-      // Expected, InvalidPathException thrown from remote
-      assertTrue(e.getMessage().contains("Invalid path name /.reserved"));
-    }
-
-    try {
-      fs.delete(new Path("/.reserved/"), true);
-      fail("Can't delete /.reserved/");
     } catch (Exception e) {
       // Expected, InvalidPathException thrown from remote
       assertTrue(e.getMessage().contains("Invalid path name /.reserved"));
@@ -1660,10 +1628,6 @@ public class TestDFSShell {
     runCmd(shell, "-cp", src.toString(), "/.reserved");
     assertTrue(baos.toString().contains("Invalid path name /.reserved"));
 
-    baos.reset();
-    runCmd(shell, "-cp", src.toString(), "/.reserved/");
-    assertTrue(baos.toString().contains("Invalid path name /.reserved"));
-
     System.setErr(syserr);
     cluster.shutdown();
   }
@@ -1691,10 +1655,6 @@ public class TestDFSShell {
     runCmd(shell, "-chmod", "777", "/.reserved");
     assertTrue(baos.toString().contains("Invalid path name /.reserved"));
 
-    baos.reset();
-    runCmd(shell, "-chmod", "555", "/.reserved/");
-    assertTrue(baos.toString().contains("Invalid path name /.reserved"));
-
     System.setErr(syserr);
     cluster.shutdown();
   }
@@ -1717,10 +1677,6 @@ public class TestDFSShell {
     runCmd(shell, "-chown", "user1", "/.reserved");
     assertTrue(baos.toString().contains("Invalid path name /.reserved"));
 
-    baos.reset();
-    runCmd(shell, "-chown", "dummy", "/.reserved/");
-    assertTrue(baos.toString().contains("Invalid path name /.reserved"));
-
     System.setErr(syserr);
     cluster.shutdown();
   }
@@ -1738,22 +1694,14 @@ public class TestDFSShell {
         new MiniDFSCluster.Builder(conf).numDataNodes(2).build();
     FileSystem fs = cluster.getFileSystem();
 
-    Path target = new Path("/.reserved");
     try {
-      fs.createSymlink(target, new Path("/rl1"), false);
-      fail("Can't create symlink to reserved");
+      fs.createSymlink(new Path("/.reserved"), new Path("/rl1"), false);
+      fail("Can't create symlink to /.reserved");
     } catch (Exception e) {
       // Expected, InvalidPathException thrown from remote
       assertTrue(e.getMessage().contains("Invalid target name: /.reserved"));
     }
 
-    try {
-      fs.createSymlink(target, new Path("/.reserved/"), false);
-      fail("Can't create symlink to empty string");
-    } catch (Exception e) {
-      // Expected, InvalidPathException thrown from remote
-      assertTrue(e.getMessage().contains("Invalid target name: /.reserved"));
-    }
     cluster.shutdown();
   }
 
