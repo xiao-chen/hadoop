@@ -573,7 +573,7 @@ public class NNStorage extends Storage implements Closeable,
   public static NamespaceInfo newNamespaceInfo()
       throws UnknownHostException {
     return new NamespaceInfo(newNamespaceID(), newClusterID(),
-        newBlockPoolID(), 0L);
+        newBlockPoolID(), new java.util.Date().getTime());
   }
   
   public void format() throws IOException {

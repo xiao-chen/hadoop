@@ -97,6 +97,9 @@ public class StorageInfo {
     clusterID = from.clusterID;
     namespaceID = from.namespaceID;
     cTime = from.cTime;
+
+    System.out.println("____ setStorageInfo set cTime to " + cTime
+      + " on clusterID:" + clusterID + " namespaceID:" + namespaceID);
   }
 
   public boolean versionSupportsFederation(

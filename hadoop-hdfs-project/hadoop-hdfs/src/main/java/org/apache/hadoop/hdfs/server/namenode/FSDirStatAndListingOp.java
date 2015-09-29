@@ -345,6 +345,7 @@ class FSDirStatAndListingOp {
    */
   private static DirectoryListing getReservedListing(FSDirectory fsd) {
     final HdfsFileStatus listing[] = { fsd.INODES_STATUS, fsd.RAW_STATUS };
+    System.out.println("_________ reserved:" + listing[0].getModificationTime());
     return new DirectoryListing(listing, 0);
   }
 
@@ -475,6 +476,7 @@ class FSDirStatAndListingOp {
     int childrenNum = node.isDirectory() ?
         node.asDirectory().getChildrenNum(snapshot) : 0;
 
+    System.out.println("_______" + node.getModificationTime(snapshot));
     return new HdfsFileStatus(
         size,
         node.isDirectory(),
