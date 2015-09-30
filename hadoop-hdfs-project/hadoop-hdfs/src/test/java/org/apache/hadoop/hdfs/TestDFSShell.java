@@ -1515,6 +1515,7 @@ public class TestDFSShell {
     MiniDFSCluster cluster =
         new MiniDFSCluster.Builder(conf).numDataNodes(2).build();
     FileSystem fs = cluster.getFileSystem();
+
     FsShell shell = new FsShell();
     shell.setConf(conf);
 

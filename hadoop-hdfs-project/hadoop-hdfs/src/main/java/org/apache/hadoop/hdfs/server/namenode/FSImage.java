@@ -153,9 +153,6 @@ public class FSImage implements Closeable {
     NamespaceInfo ns = NNStorage.newNamespaceInfo();
     LOG.info("Allocated new BlockPoolId: " + ns.getBlockPoolID());
     ns.clusterID = clusterId;
-    System.out.println("____ NamespaceInfo:" + ns.getCTime() + " ID:" + ns.getBlockPoolID() + "," + ns.getNamespaceID() + "," + ns.getClusterID()
-      + " NNStorage:" + storage.getCTime() + " ID:" + storage.getBlockPoolID() + "," + storage.getNamespaceID() + "," + storage.getClusterID());
-
     storage.format(ns);
     editLog.formatNonFileJournals(ns);
 

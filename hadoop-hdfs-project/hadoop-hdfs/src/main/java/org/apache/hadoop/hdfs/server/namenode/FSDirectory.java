@@ -320,17 +320,6 @@ public class FSDirectory implements Closeable {
         DFSConfigKeys.DFS_NAMENODE_QUOTA_INIT_THREADS_DEFAULT);
 
     //TODO format time?
-    System.out.println("_____Reading fake statuses:" + ns.getFSImage().getStorage().getCTime());
-
-    System.out.println(
-        "____ NamespaceInfo:" + ns.getFSImage().getStorage().getCTime() + " ID:"
-            + ns.getFSImage().getStorage().getBlockPoolID() + "," + ns
-            .getFSImage().getStorage().getNamespaceID() + "," + ns.getFSImage()
-            .getStorage().getClusterID());
-
-    System.out.println("_________" + ns.getBlockIdManager().getGenerationStampV1() + "," + ns.getBlockIdManager().getGenerationStampV2()
-        + "," + ns.getBlockIdManager().getGenerationStampV1Limit());
-
     INODES_STATUS = new HdfsFileStatus(0, true, 0, 0,
         ns.getStartTime() == null ? 0 : ns.getFSImage().getStorage().getCTime(), 0,
         new FsPermission((short) 01770), null, null, null, DOT_INODES, -1L, 0,
