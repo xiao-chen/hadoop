@@ -187,6 +187,7 @@ enum StorageTypeProto {
   SSD = 2;
   ARCHIVE = 3;
   RAM_DISK = 4;
+  SHARED = 5;
 }
 
 /**

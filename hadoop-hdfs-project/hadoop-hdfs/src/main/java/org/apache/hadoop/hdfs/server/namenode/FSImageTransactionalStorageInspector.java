@@ -84,6 +84,7 @@ class FSImageTransactionalStorageInspector extends FSImageStorageInspector {
     // must be included in our load plan.
     try {
       maxSeenTxId = Math.max(maxSeenTxId, NNStorage.readTransactionIdFile(sd));
+      LOG.info("Max seen transaction ID is " + maxSeenTxId);
     } catch (IOException ioe) {
       LOG.warn("Unable to determine the max transaction ID seen by " + sd, ioe);
       return;

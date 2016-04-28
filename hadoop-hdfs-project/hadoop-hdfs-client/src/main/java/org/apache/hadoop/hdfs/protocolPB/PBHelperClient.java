@@ -356,6 +356,8 @@ public class PBHelperClient {
       return StorageTypeProto.ARCHIVE;
     case RAM_DISK:
       return StorageTypeProto.RAM_DISK;
+    case SHARED:
+      return StorageTypeProto.SHARED;
     default:
       throw new IllegalStateException(
           "BUG: StorageType not found, type=" + type);
@@ -372,6 +374,8 @@ public class PBHelperClient {
       return StorageType.ARCHIVE;
     case RAM_DISK:
       return StorageType.RAM_DISK;
+    case SHARED:
+      return StorageType.SHARED;
     default:
       throw new IllegalStateException(
           "BUG: StorageTypeProto not found, type=" + type);

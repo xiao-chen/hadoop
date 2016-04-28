@@ -159,6 +159,7 @@ public interface HdfsServerConstants {
     RENAMERESERVED("-renameReserved"),
     METADATAVERSION("-metadataVersion"),
     UPGRADEONLY("-upgradeOnly"),
+    S3("-s3"),
     // The -hotswap constant should not be used as a startup option, it is
     // only used for StorageDirectory.analyzeStorage() in hot swap drive scenario.
     // TODO refactor StorageDirectory.analyzeStorage() so that we can do away with
@@ -272,7 +273,8 @@ public interface HdfsServerConstants {
   enum NamenodeRole {
     NAMENODE  ("NameNode"),
     BACKUP    ("Backup Node"),
-    CHECKPOINT("Checkpoint Node");
+    CHECKPOINT("Checkpoint Node"),
+    NAMENODE_S3 ("NameNode On S3");
 
     private String description = null;
     NamenodeRole(String arg) {this.description = arg;}

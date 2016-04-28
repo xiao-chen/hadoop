@@ -317,8 +317,8 @@ public class DatanodeManager {
   }
   
   void activate(final Configuration conf) {
-    decomManager.activate(conf);
-    heartbeatManager.activate();
+//    decomManager.activate(conf);
+//    heartbeatManager.activate();
   }
 
   void close() {

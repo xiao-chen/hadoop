@@ -23,6 +23,7 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.HadoopIllegalArgumentException;
@@ -31,6 +32,8 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.ReconfigurableBase;
 import org.apache.hadoop.conf.ReconfigurationException;
 import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.FileUtil;
+import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.Trash;
 import org.apache.hadoop.ha.HAServiceProtocol.HAServiceState;
 import org.apache.hadoop.ha.HAServiceProtocol.StateChangeRequestInfo;
@@ -50,6 +53,7 @@ import org.apache.hadoop.hdfs.server.common.HdfsServerConstants.NamenodeRole;
 import org.apache.hadoop.hdfs.server.common.HdfsServerConstants.RollingUpgradeStartupOption;
 import org.apache.hadoop.hdfs.server.common.HdfsServerConstants.StartupOption;
 import org.apache.hadoop.hdfs.server.common.MetricsLoggerTask;
+import org.apache.hadoop.hdfs.server.common.Storage;
 import org.apache.hadoop.hdfs.server.namenode.ha.ActiveState;
 import org.apache.hadoop.hdfs.server.namenode.ha.BootstrapStandby;
 import org.apache.hadoop.hdfs.server.namenode.ha.HAContext;
@@ -64,6 +68,7 @@ import org.apache.hadoop.hdfs.server.protocol.NamenodeProtocol;
 import org.apache.hadoop.hdfs.server.protocol.NamenodeProtocols;
 import org.apache.hadoop.hdfs.server.protocol.NamenodeRegistration;
 import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
+import org.apache.hadoop.hdfs.tools.offlineImageViewer.OfflineImageReconstructor;
 import org.apache.hadoop.ipc.RefreshCallQueueProtocol;
 import org.apache.hadoop.ipc.Server;
 import org.apache.hadoop.ipc.StandbyException;
@@ -90,10 +95,13 @@ import org.slf4j.LoggerFactory;
 
 import javax.management.ObjectName;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.security.PrivilegedExceptionAction;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -217,7 +225,8 @@ public class NameNode extends ReconfigurableBase implements
     /** Operations related to checkpointing */
     CHECKPOINT,
     /** Operations related to {@link JournalProtocol} */
-    JOURNAL
+    JOURNAL,
+    S3
   }
   
   /**
@@ -362,7 +371,9 @@ public class NameNode extends ReconfigurableBase implements
   private final HAContext haContext;
   protected final boolean allowStaleStandbyReads;
   private AtomicBoolean started = new AtomicBoolean(false); 
+  private boolean onS3;
 
+  private static final String TEMP_IMAGE_NAME = "fsimage_0000000002147483640";
   
   /** httpServer */
   protected NameNodeHttpServer httpServer;
@@ -510,6 +521,10 @@ public class NameNode extends ReconfigurableBase implements
   //
   public NamenodeRole getRole() {
     return role;
+  }
+
+  public boolean isOnS3() {
+    return onS3;
   }
 
   boolean isRole(NamenodeRole that) {
@@ -675,7 +690,43 @@ public class NameNode extends ReconfigurableBase implements
     SecurityUtil.login(conf, DFS_NAMENODE_KEYTAB_FILE_KEY,
         DFS_NAMENODE_KERBEROS_PRINCIPAL_KEY, socAddr.getHostName());
   }
-  
+
+  private void createImageFileFromS3(Configuration conf) throws IOException {
+    LOG.info("____ Creating image file from S3");
+    format(conf);
+    LOG.info("____ Cleared namespace dirs");
+
+    // TODO: configurable
+    String xmlFile = "/Users/xiao/Desktop/repo/hdfs/xiao/hadoop/hadoop-dist/s3.image.xml";
+
+    // TODO: match TXID? too hacky now...
+    String tmpImage = null;
+    Collection<URI> dirs = FSNamesystem.getNamespaceDirs(conf);
+    for (URI dir : dirs) {
+      tmpImage = dir.getPath() + Path.SEPARATOR + Storage.STORAGE_DIR_CURRENT
+          + Path.SEPARATOR + TEMP_IMAGE_NAME;
+    }
+    try {
+      OfflineImageReconstructor.run(xmlFile, tmpImage);
+    } catch (Exception e) {
+      LOG.error("_____ exception caught when generating image file from s3", e);
+    }
+  }
+
+  private void cleanupTempImageForS3(Configuration conf) throws IOException {
+    // to get desired txid
+    getFSImage().saveNamespace(namesystem);
+    Collection<URI> dirs = FSNamesystem.getNamespaceDirs(conf);
+    for (URI dir : dirs) {
+      Files.deleteIfExists(Paths.get(
+          dir.getPath() + Path.SEPARATOR + Storage.STORAGE_DIR_CURRENT
+              + Path.SEPARATOR + TEMP_IMAGE_NAME));
+      Files.deleteIfExists(Paths.get(
+          dir.getPath() + Path.SEPARATOR + Storage.STORAGE_DIR_CURRENT
+              + Path.SEPARATOR + TEMP_IMAGE_NAME + ".md5"));
+    }
+  }
+
   /**
    * Initialize name-node.
    * 
@@ -705,7 +756,13 @@ public class NameNode extends ReconfigurableBase implements
       startHttpServer(conf);
     }
 
+    if (isOnS3()) {
+      createImageFileFromS3(conf);
+    }
     loadNamesystem(conf);
+    if (isOnS3()) {
+      cleanupTempImageForS3(conf);
+    }
 
     rpcServer = createRpcServer(conf);
 
@@ -906,6 +963,10 @@ public class NameNode extends ReconfigurableBase implements
   protected NameNode(Configuration conf, NamenodeRole role)
       throws IOException {
     super(conf);
+    if (role == NamenodeRole.NAMENODE_S3) {
+      this.onS3 = true;
+      role = NamenodeRole.NAMENODE;
+    }
     this.tracer = new Tracer.Builder("NameNode").
         conf(TraceUtils.wrapHadoopConf(NAMENODE_HTRACE_PREFIX, conf)).
         build();
@@ -1477,6 +1538,8 @@ public class NameNode extends ReconfigurableBase implements
         }
       } else if (StartupOption.METADATAVERSION.getName().equalsIgnoreCase(cmd)) {
         startOpt = StartupOption.METADATAVERSION;
+      } else if (StartupOption.S3.getName().equalsIgnoreCase(cmd)) {
+        startOpt = StartupOption.S3;
       } else {
         return null;
       }
@@ -1614,6 +1677,10 @@ public class NameNode extends ReconfigurableBase implements
         new NameNode(conf);
         terminate(0);
         return null;
+      }
+      case S3: {
+        LOG.info("____ Starting NameNode in S3 mode ...");
+        return new NameNode(conf, NamenodeRole.NAMENODE_S3);
       }
       default: {
         DefaultMetricsSystem.initialize("NameNode");

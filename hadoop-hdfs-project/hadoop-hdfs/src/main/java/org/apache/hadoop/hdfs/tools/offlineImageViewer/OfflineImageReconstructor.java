@@ -85,7 +85,7 @@ import javax.xml.stream.events.XMLEvent;
 
 @InterfaceAudience.Private
 @InterfaceStability.Unstable
-class OfflineImageReconstructor {
+public class OfflineImageReconstructor {
   public static final Log LOG =
       LogFactory.getLog(OfflineImageReconstructor.class);
 
