@@ -373,7 +373,7 @@ public class NameNode extends ReconfigurableBase implements
   private AtomicBoolean started = new AtomicBoolean(false); 
   private boolean onS3;
 
-  private static final String TEMP_IMAGE_NAME = "fsimage_0000000002147483640";
+  private static final String TEMP_IMAGE_NAME = "fsimage_0000000001147483640";
   
   /** httpServer */
   protected NameNodeHttpServer httpServer;
@@ -696,8 +696,8 @@ public class NameNode extends ReconfigurableBase implements
     format(conf);
     LOG.info("____ Cleared namespace dirs");
 
-    // TODO: configurable
-    String xmlFile = "/Users/xiao/Desktop/repo/hdfs/xiao/hadoop/hadoop-dist/s3.image.xml";
+    String xmlFile = conf.get(DFSConfigKeys.DFS_NAMENODE_TEMPORARY_IMAGE,
+        "/Users/xiao/Desktop/repo/hdfs/xiao/hadoop/hadoop-dist/s3.image.xml");
 
     // TODO: match TXID? too hacky now...
     String tmpImage = null;
@@ -998,6 +998,7 @@ public class NameNode extends ReconfigurableBase implements
       throw e;
     }
     this.started.set(true);
+    LOG.info("_____ NameNode started");
   }
 
   private void stopAtException(Exception e){

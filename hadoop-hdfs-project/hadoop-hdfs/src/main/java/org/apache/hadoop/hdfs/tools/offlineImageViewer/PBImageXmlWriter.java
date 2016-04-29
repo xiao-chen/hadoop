@@ -108,6 +108,7 @@ public final class PBImageXmlWriter {
   public static final String NAME_SECTION_LAST_ALLOCATED_STRIPED_BLOCK_ID =
       "lastAllocatedStripedBlockId";
 
+  public static final String INODE_SECTION_SIZE = "size";
   public static final String INODE_SECTION_LAST_INODE_ID = "lastInodeId";
   public static final String INODE_SECTION_NUM_INODES = "numInodes";
   public static final String INODE_SECTION_TYPE = "type";

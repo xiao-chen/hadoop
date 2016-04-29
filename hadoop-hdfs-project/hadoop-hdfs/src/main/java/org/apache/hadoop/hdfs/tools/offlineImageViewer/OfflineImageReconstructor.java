@@ -523,36 +523,42 @@ public class OfflineImageReconstructor {
 
   private INodeSection.INode.Builder processINodeXml(Node node)
       throws IOException {
-    String type = node.removeChildStr(INODE_SECTION_TYPE);
-    if (type == null) {
-      throw new IOException("INode XML found with no <type> tag.");
+    String debugStr = node.dump();
+    try {
+      String type = node.removeChildStr(INODE_SECTION_TYPE);
+      if (type == null) {
+        throw new IOException("INode XML found with no <type> tag.");
+      }
+      INodeSection.INode.Builder inodeBld = INodeSection.INode.newBuilder();
+      Long id = node.removeChildLong(SECTION_ID);
+      if (id == null) {
+        throw new IOException("<inode> found without <id>");
+      }
+      inodeBld.setId(id);
+      String name = node.removeChildStr(SECTION_NAME);
+      if (name != null) {
+        inodeBld.setName(ByteString.copyFrom(name, "UTF8"));
+      }
+      switch (type) {
+      case "FILE":
+        processFileXml(node, inodeBld );
+        break;
+      case "DIRECTORY":
+        processDirectoryXml(node, inodeBld);
+        break;
+      case "SYMLINK":
+        processSymlinkXml(node, inodeBld);
+        break;
+      default:
+        throw new IOException("INode XML found with unknown <type> " +
+            "tag " + type);
+      }
+      node.verifyNoRemainingKeys("inode");
+      return inodeBld;
+    } catch (Exception e) {
+      LOG.error("Exception caught when parsing node " + debugStr, e);
+      throw e;
     }
-    INodeSection.INode.Builder inodeBld = INodeSection.INode.newBuilder();
-    Long id = node.removeChildLong(SECTION_ID);
-    if (id == null) {
-      throw new IOException("<inode> found without <id>");
-    }
-    inodeBld.setId(id);
-    String name = node.removeChildStr(SECTION_NAME);
-    if (name != null) {
-      inodeBld.setName(ByteString.copyFrom(name, "UTF8"));
-    }
-    switch (type) {
-    case "FILE":
-      processFileXml(node, inodeBld );
-      break;
-    case "DIRECTORY":
-      processDirectoryXml(node, inodeBld);
-      break;
-    case "SYMLINK":
-      processSymlinkXml(node, inodeBld);
-      break;
-    default:
-      throw new IOException("INode XML found with unknown <type> " +
-          "tag " + type);
-    }
-    node.verifyNoRemainingKeys("inode");
-    return inodeBld;
   }
 
   private void processFileXml(Node node, INodeSection.INode.Builder inodeBld)

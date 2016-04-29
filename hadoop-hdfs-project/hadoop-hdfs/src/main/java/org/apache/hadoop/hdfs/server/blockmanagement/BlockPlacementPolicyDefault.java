@@ -128,6 +128,9 @@ public class BlockPlacementPolicyDefault extends BlockPlacementPolicy {
       BlockStoragePolicy storagePolicy,
       EnumSet<AddBlockFlag> flags) {
     try {
+//      if (storagePolicy.getStorageTypes() == StorageType.SHARED) {
+//
+//      }
       if (favoredNodes == null || favoredNodes.size() == 0) {
         // Favored nodes not specified, fall back to regular block placement.
         return chooseTarget(src, numOfReplicas, writer,

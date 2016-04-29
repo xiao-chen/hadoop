@@ -27,7 +27,7 @@ def create_bucket(args):
 
 
 class FsImageBuilder(object):
-    ROOT_ID = 2 ** 14
+    ROOT_ID = 2 ** 14 + 1
 
     def __init__(self):
         self.tree = et.ElementTree()
@@ -135,7 +135,7 @@ class FsImageBuilder(object):
         inode = et.Element('INodeSection')
         inode.append(self.element('lastInodeId', self.last_inode))
         inode.append(self.element('numInodes', len(self.inode_map)))
-        print(sorted(self.inode_map.keys()))
+        #print(sorted(self.inode_map.keys()))
         for k, v in self.inode_map.items():
             inode.append(self.inode_element(k, v))
 
@@ -212,7 +212,6 @@ def list_bucket(args):
         files.append(s3_file)
     files = sorted(files, key=lambda f: f[0])
     create_fsimage(args, files)
-
 
 def main():
     """Main function of ....
