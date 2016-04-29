@@ -737,8 +737,6 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
       // block manager needs the haEnabled initialized
       this.blockManager = new BlockManager(this, haEnabled, conf);
       this.datanodeStatistics = blockManager.getDatanodeManager().getDatanodeStatistics();
-//      this.blockManager = null;
-//      this.datanodeStatistics = null;
 
       // Get the checksum type from config
       String checksumTypeStr = conf.get(DFS_CHECKSUM_TYPE_KEY,
