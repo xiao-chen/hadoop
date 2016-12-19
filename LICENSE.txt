@@ -324,6 +324,7 @@ The binary distribution of this product bundles these dependencies under the
 following license:
 re2j 1.0
 ---------------------------------------------------------------------
+(GO license)
 This is a work derived from Russ Cox's RE2 in Go, whose license
 http://golang.org/LICENSE is as follows:
 
@@ -691,6 +692,7 @@ The binary distribution of this product bundles these dependencies under the
 following license:
 HSQLDB Database 2.0.0
 --------------------------------------------------------------------------------
+(HSQL License)
 "COPYRIGHTS AND LICENSES (based on BSD License)
 
 For work developed by the HSQL Development Group:
@@ -760,10 +762,15 @@ Hypersonic SQL Group."
 
 The binary distribution of this product bundles these dependencies under the
 following license:
+Java Servlet API 3.1.0
 servlet-api 2.5
 jsp-api 2.1
-Streaming API for XML 1.0
+jsr311-api 1.1.1
+JRuby Complete 1.6.8
+Glassfish Jasper 6.1.14
+Servlet Specification 2.5 API 6.1.14
 --------------------------------------------------------------------------------
+(CDDL 1.0)
 COMMON DEVELOPMENT AND DISTRIBUTION LICENSE (CDDL) Version 1.0
 1. Definitions. 
 
@@ -1075,10 +1082,25 @@ of liability. 
 
 The binary distribution of this product bundles these dependencies under the
 following license:
-Jersey 1.9
-JAXB API bundle for GlassFish V3 2.2.2
+jersey-client 1.19
+jersey-core 1.19
+jersey-grizzly2 1.19
+jersey-grizzly2-servlet 1.19
+jersey-json 1.19
+jersey-server 1.19
+jersey-servlet 1.19
+jersey-guice 1.19
+Jersey Test Framework - Core 1.19
+Jersey Test Framework - Grizzly 2 Module 1.19
 JAXB RI 2.2.3
+Java Architecture for XML Binding 2.2.11
+grizzly-framework 2.2.21
+grizzly-http 2.2.21
+grizzly-http-server 2.2.21
+grizzly-http-servlet 2.2.21
+grizzly-rcm 2.2.21
 --------------------------------------------------------------------------------
+(CDDL 1.1)
 COMMON DEVELOPMENT AND DISTRIBUTION LICENSE (CDDL)Version 1.1
 
 1. Definitions.
@@ -1439,7 +1461,12 @@ The binary distribution of this product bundles these dependencies under the
 following license:
 JUnit 4.11
 ecj-4.3.1.jar
+Logback Classic Module 1.1.2
+Logback Core Module 1.1.2
+minimal-json 0.9.1
+Eclipse JDT Core 3.1.1
 --------------------------------------------------------------------------------
+(EPL v1.0)
 Eclipse Public License - v 1.0
 
 THE ACCOMPANYING PROGRAM IS PROVIDED UNDER THE TERMS OF THIS ECLIPSE PUBLIC
@@ -1649,7 +1676,9 @@ ANTLR 3 Runtime 3.5
 ANTLR StringTemplate 3.2.1
 ASM All 5.0.2
 sqlline 1.1.8
+D3 v3.5.6
 --------------------------------------------------------------------------------
+(3-clause BSD)
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
     * Redistributions of source code must retain the above copyright
@@ -1676,6 +1705,7 @@ The binary distribution of this product bundles these dependencies under the
 following license:
 FindBugs-jsr305 3.0.0
 --------------------------------------------------------------------------------
+(2-clause BSD)
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
 
@@ -1704,6 +1734,7 @@ The binary distribution of this product bundles these dependencies under the
 following license:
 Java Concurrency in Practice book annotations 1.0
 --------------------------------------------------------------------------------
+(CCAL v2.5)
 THE WORK (AS DEFINED BELOW) IS PROVIDED UNDER THE TERMS OF THIS CREATIVE COMMONS
 PUBLIC LICENSE ("CCPL" OR "LICENSE"). THE WORK IS PROTECTED BY COPYRIGHT AND/OR
 OTHER APPLICABLE LAW. ANY USE OF THE WORK OTHER THAN AS AUTHORIZED UNDER THIS
@@ -1881,6 +1912,7 @@ The binary distribution of this product bundles these dependencies under the
 following license:
 jamon-runtime 2.3.1
 --------------------------------------------------------------------------------
+(MPL 1.1)
                           MOZILLA PUBLIC LICENSE
                                 Version 1.1
 
@@ -2385,32 +2417,30 @@ THE SOFTWARE.
 
 The binary distribution of this product bundles these dependencies under the
 following license:
-D3 v3.5.6
+JDOM 1.1
 --------------------------------------------------------------------------------
-(3-clause BSD license)
-All rights reserved.
+(4-clause BSD)
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+3. All advertising materials mentioning features or use of this software
+   must display the following acknowledgement:
+   This product includes software developed by the <organization>.
+4. Neither the name of the <organization> nor the
+   names of its contributors may be used to endorse or promote products
+   derived from this software without specific prior written permission.
 
-Redistribution and use in source and binary forms, with or without modification,
-are permitted provided that the following conditions are met:
-
-1. Redistributions of source code must retain the above copyright notice, this list
-   of conditions and the following disclaimer.
-
-2. Redistributions in binary form must reproduce the above copyright notice, this
-   list of conditions and the following disclaimer in the documentation and/or
-   other materials provided with the distribution.
-
-3. Neither the name of the copyright holder nor the names of its contributors may
-   be used to endorse or promote products derived from this software without
-   specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
-IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
-INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
-NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
-PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
-WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-POSSIBILITY OF SUCH DAMAGE.
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ''AS IS'' AND ANY
+EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL <COPYRIGHT HOLDER> BE LIABLE FOR ANY
+DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
