@@ -11,6 +11,7 @@ import traceback
 OMIT_IN_LICENSES = {"ASLv2"}
 
 # See https://issues.apache.org/jira/browse/HADOOP-12893?focusedCommentId=15284739&page=com.atlassian.jira.plugin.system.issuetabpanels:comment-tabpanel#comment-15284739
+# and http://www.apache.org/dev/licensing-howto.html#permissive-deps
 OMIT_IN_NOTICES = {"2-clause BSD", "3-clause BSD", "4-clause BSD", "MIT"}
 
 # Anything not in here needs manual inspection. Populated when reading in Licenses
