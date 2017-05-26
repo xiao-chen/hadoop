@@ -177,6 +177,17 @@ Get encryption information from a file. This can be used to find out whether a f
 |:---- |:---- |
 | *path* | The path of the file to get encryption information. |
 
+### <a name="reencryptZone"></a>reencryptZone
+
+Usage: `[-reencryptZone <action> -path <zone>]`
+
+Re-encrypts an encryption zone, by iterating through the encryption zone, and calling the KeyProvider's reencryptEncryptedKey interface to re-encrypt all files' EDEKs with the latest version encryption zone key. Requires superuser permissions.
+
+| | |
+|:---- |:---- |
+| *action* | The re-encrypt action to perform. Must be `-start` or `-cancel`. |
+| *path* | The path to the root of the encryption zone. |
+
 <a name="Example_usage"></a>Example usage
 -------------
 

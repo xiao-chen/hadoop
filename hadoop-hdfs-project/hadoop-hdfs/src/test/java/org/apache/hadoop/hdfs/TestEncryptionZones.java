@@ -19,6 +19,7 @@ package org.apache.hadoop.hdfs;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.io.RandomAccessFile;
@@ -29,14 +30,19 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
+import com.google.common.base.Supplier;
 import com.google.common.collect.Lists;
 
 import org.apache.hadoop.conf.Configuration;
@@ -66,13 +72,20 @@ import org.apache.hadoop.hdfs.client.CreateEncryptionZoneFlag;
 import org.apache.hadoop.hdfs.client.HdfsAdmin;
 import org.apache.hadoop.hdfs.protocol.ClientProtocol;
 import org.apache.hadoop.hdfs.protocol.EncryptionZone;
+import org.apache.hadoop.hdfs.protocol.HdfsConstants.ReencryptAction;
 import org.apache.hadoop.hdfs.protocol.HdfsFileStatus;
 import org.apache.hadoop.hdfs.protocol.LocatedBlocks;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants.SafeModeAction;
+import org.apache.hadoop.hdfs.protocol.ReencryptionStatus;
+import org.apache.hadoop.hdfs.protocol.ReencryptionStatus.ZoneStatus;
+import org.apache.hadoop.hdfs.protocol.SnapshotAccessControlException;
 import org.apache.hadoop.hdfs.server.namenode.EncryptionFaultInjector;
 import org.apache.hadoop.hdfs.server.namenode.EncryptionZoneManager;
 import org.apache.hadoop.hdfs.server.namenode.FSImageTestUtil;
+import org.apache.hadoop.hdfs.server.namenode.FSNamesystem;
 import org.apache.hadoop.hdfs.server.namenode.NamenodeFsck;
+import org.apache.hadoop.hdfs.server.namenode.ReencryptionFinalizer;
+import org.apache.hadoop.hdfs.server.namenode.ReencryptionHandler;
 import org.apache.hadoop.hdfs.tools.CryptoAdmin;
 import org.apache.hadoop.hdfs.tools.DFSck;
 import org.apache.hadoop.hdfs.tools.offlineImageViewer.PBImageXmlWriter;
@@ -80,23 +93,22 @@ import org.apache.hadoop.hdfs.web.WebHdfsConstants;
 import org.apache.hadoop.hdfs.web.WebHdfsFileSystem;
 import org.apache.hadoop.hdfs.web.WebHdfsTestUtil;
 import org.apache.hadoop.io.EnumSetWritable;
+import org.apache.hadoop.ipc.RemoteException;
 import org.apache.hadoop.security.AccessControlException;
 import org.apache.hadoop.security.Credentials;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.token.Token;
+import org.apache.hadoop.test.GenericTestUtils;
 import org.apache.hadoop.util.DataChecksum;
 import org.apache.hadoop.util.ToolRunner;
 import org.apache.hadoop.crypto.key.KeyProviderDelegationTokenExtension.DelegationTokenExtension;
 import org.apache.hadoop.crypto.key.KeyProviderCryptoExtension.CryptoExtension;
 import org.apache.hadoop.io.Text;
 import org.apache.log4j.Level;
-import org.apache.log4j.Logger;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.Timeout;
 import org.mockito.Mockito;
 
 import static org.junit.Assert.assertNotNull;
@@ -132,6 +144,7 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import org.slf4j.LoggerFactory;
 import org.xml.sax.InputSource;
 import org.xml.sax.helpers.DefaultHandler;
 
@@ -140,12 +153,16 @@ import javax.xml.parsers.SAXParserFactory;
 
 public class TestEncryptionZones {
 
+  protected static final org.slf4j.Logger LOG =
+      LoggerFactory.getLogger(TestEncryptionZones.class);
+
   protected Configuration conf;
   private FileSystemTestHelper fsHelper;
 
   protected MiniDFSCluster cluster;
   protected HdfsAdmin dfsAdmin;
   protected DistributedFileSystem fs;
+  private FSNamesystem fsn;
   private File testRootDir;
   protected final String TEST_KEY = "test_key";
   private static final String NS_METRICS = "FSNamesystem";
@@ -156,13 +173,16 @@ public class TestEncryptionZones {
   protected static final EnumSet< CreateEncryptionZoneFlag > NO_TRASH =
       EnumSet.of(CreateEncryptionZoneFlag.NO_TRASH);
 
+//  @Rule
+//  public Timeout testTimeout = new Timeout(180000);
+
   protected String getKeyProviderURI() {
     return JavaKeyStoreProvider.SCHEME_NAME + "://file" +
       new Path(testRootDir.toString(), "test.jks").toUri();
   }
 
-  @Rule
-  public Timeout globalTimeout = new Timeout(120 * 1000);
+//  @Rule
+//  public Timeout globalTimeout = new Timeout(120 * 1000);
 
   @Before
   public void setup() throws Exception {
@@ -177,10 +197,16 @@ public class TestEncryptionZones {
     // Lower the batch size for testing
     conf.setInt(DFSConfigKeys.DFS_NAMENODE_LIST_ENCRYPTION_ZONES_NUM_RESPONSES,
         2);
+    // Lower the listing limit for testing
+    conf.setInt(DFSConfigKeys.DFS_LIST_LIMIT, 3);
+    // Adjust configs for re-encrypt test cases
+    conf.setTimeDuration(DFSConfigKeys.DFS_NAMENODE_REENCRYPT_INTERVAL_KEY, 100,
+        TimeUnit.MILLISECONDS);
+    conf.setInt(DFSConfigKeys.DFS_NAMENODE_REENCRYPT_BATCH_SIZE_KEY, 5);
     cluster = new MiniDFSCluster.Builder(conf).numDataNodes(1).build();
     cluster.waitActive();
-    Logger.getLogger(EncryptionZoneManager.class).setLevel(Level.TRACE);
     fs = cluster.getFileSystem();
+    fsn = cluster.getNamesystem();
     fsWrapper = new FileSystemTestWrapper(fs);
     fcWrapper = new FileContextTestWrapper(
         FileContext.getFileContext(cluster.getURI(), conf));
@@ -188,6 +214,10 @@ public class TestEncryptionZones {
     setProvider();
     // Create a test key
     DFSTestUtil.createKey(TEST_KEY, cluster, conf);
+    GenericTestUtils.setLogLevel(EncryptionZoneManager.LOG, Level.TRACE);
+    GenericTestUtils.setLogLevel(ReencryptionHandler.LOG, Level.TRACE);
+    GenericTestUtils.setLogLevel(ReencryptionStatus.LOG, Level.TRACE);
+    GenericTestUtils.setLogLevel(ReencryptionFinalizer.LOG, Level.TRACE);
   }
   
   protected void setProvider() {
@@ -744,8 +774,8 @@ public class TestEncryptionZones {
     // Roll the key of the encryption zone
     assertNumZones(1);
     String keyName = dfsAdmin.listEncryptionZones().next().getKeyName();
-    cluster.getNamesystem().getProvider().rollNewVersion(keyName);
-    cluster.getNamesystem().getProvider().invalidateCache(keyName);
+    fsn.getProvider().rollNewVersion(keyName);
+    fsn.getProvider().invalidateCache(keyName);
     // Read them back in and compare byte-by-byte
     verifyFilesEqual(fs, baseFile, encFile1, len);
     // Write a new enc file and validate
@@ -856,7 +886,7 @@ public class TestEncryptionZones {
         .createFile(fs, new Path(zone, "success3"), 4096, (short) 1, 0xFEED);
     // Check KeyProvider state
     // Flushing the KP on the NN, since it caches, and init a test one
-    cluster.getNamesystem().getProvider().flush();
+    fsn.getProvider().flush();
     KeyProvider provider = KeyProviderFactory.get(new URI(conf.getTrimmed(
         CommonConfigurationKeysPublic.HADOOP_SECURITY_KEY_PROVIDER_PATH)),
         conf);
@@ -1866,4 +1896,964 @@ public class TestEncryptionZones {
     // Read them back in and compare byte-by-byte
     verifyFilesEqual(fs, baseFile, encFile1, len);
   }
+
+  @Test
+  public void testReencryptBasic() throws Exception {
+    /* Setup test dir:
+     * /zones/zone/[0-9]
+     * /dir/f
+     */
+    final int len = 8196;
+    final Path zoneParent = new Path("/zones");
+    final Path zone = new Path(zoneParent, "zone");
+    fsWrapper.mkdir(zone, FsPermission.getDirDefault(), true);
+    dfsAdmin.createEncryptionZone(zone, TEST_KEY, NO_TRASH);
+    for (int i = 0; i < 10; ++i) {
+      DFSTestUtil
+          .createFile(fs, new Path(zone, Integer.toString(i)), len, (short) 1,
+              0xFEED);
+    }
+    final Path subdir = new Path("/dir");
+    fsWrapper.mkdir(subdir, FsPermission.getDirDefault(), true);
+    DFSTestUtil.createFile(fs, new Path(subdir, "f"), len, (short) 1, 0xFEED);
+
+    // test re-encrypt without keyroll
+    final Path encFile1 = new Path(zone, "0");
+    final FileEncryptionInfo fei0 = getFileEncryptionInfo(encFile1);
+    dfsAdmin.reencryptEncryptionZone(zone, ReencryptAction.START);
+    waitForReencryptedZones(1);
+    assertKeyVersionEquals(encFile1, fei0);
+
+    // test re-encrypt after keyroll
+    fsn.getProvider().rollNewVersion(TEST_KEY);
+    fsn.getProvider().flush();
+    dfsAdmin.reencryptEncryptionZone(zone, ReencryptAction.START);
+    waitForReencryptedZones(2);
+    FileEncryptionInfo fei1 = getFileEncryptionInfo(encFile1);
+    assertKeyVersionChanged(encFile1, fei0);
+
+    dfsAdmin.reencryptEncryptionZone(zone, ReencryptAction.START);
+    waitForReencryptedZones(3);
+    assertKeyVersionEquals(encFile1, fei1);
+
+    // test non-EZ submission
+    try {
+      dfsAdmin.reencryptEncryptionZone(subdir, ReencryptAction.START);
+      fail("Re-encrypting non-EZ should fail");
+    } catch (RemoteException expected) {
+      LOG.info("Expected exception caught.", expected);
+      assertExceptionContains("not the root of an encryption zone", expected);
+    }
+
+    // test non-existing dir
+    try {
+      dfsAdmin.reencryptEncryptionZone(new Path(zone, "notexist"),
+          ReencryptAction.START);
+      fail("Re-encrypting non-existing dir should fail");
+    } catch (RemoteException expected) {
+      LOG.info("Expected exception caught.", expected);
+      assertTrue(
+          expected.unwrapRemoteException() instanceof FileNotFoundException);
+    }
+
+    // test directly on a EZ file
+    try {
+      dfsAdmin.reencryptEncryptionZone(encFile1, ReencryptAction.START);
+      fail("Re-encrypting on a file should fail");
+    } catch (RemoteException expected) {
+      LOG.info("Expected exception caught.", expected);
+      assertExceptionContains("not the root of an encryption zone", expected);
+    }
+
+    // test same command resubmission
+    getEzManager().pauseReencryptForTesting();
+    dfsAdmin.reencryptEncryptionZone(zone, ReencryptAction.START);
+    waitForQueuedZones(1);
+    try {
+      dfsAdmin.reencryptEncryptionZone(zone, ReencryptAction.START);
+    } catch (RemoteException expected) {
+      LOG.info("Expected exception caught.", expected);
+      assertExceptionContains("already submitted", expected);
+    }
+    getEzManager().resumeReencryptForTesting();
+    waitForReencryptedZones(4);
+
+    // test empty EZ
+    final Path emptyZone = new Path("/emptyZone");
+    fsWrapper.mkdir(emptyZone, FsPermission.getDirDefault(), true);
+    dfsAdmin.createEncryptionZone(emptyZone, TEST_KEY, NO_TRASH);
+
+    dfsAdmin.reencryptEncryptionZone(emptyZone, ReencryptAction.START);
+    waitForReencryptedZones(5);
+
+    dfsAdmin.reencryptEncryptionZone(emptyZone, ReencryptAction.START);
+    waitForReencryptedZones(6);
+  }
+
+  @Test
+  public void testReencryptOrdering() throws Exception {
+    /* Setup dir as follows:
+     * /zones/zone/[0-3]
+     * /zones/zone/dir/f
+     * /zones/zone/f[0-4]
+     */
+    final int len = 8196;
+    final Path zoneParent = new Path("/zones");
+    final Path zone = new Path(zoneParent, "zone");
+    fsWrapper.mkdir(zone, FsPermission.getDirDefault(), true);
+    dfsAdmin.createEncryptionZone(zone, TEST_KEY, NO_TRASH);
+    Path subdir = new Path(zone, "dir");
+    fsWrapper.mkdir(subdir, FsPermission.getDirDefault(), true);
+    DFSTestUtil.createFile(fs, new Path(subdir, "f"), len, (short) 1, 0xFEED);
+    for (int i = 0; i < 4; ++i) {
+      DFSTestUtil.createFile(fs, new Path(zone, Integer.toString(i)), len,
+          (short) 1, 0xFEED);
+    }
+    for (int i = 0; i < 5; ++i) {
+      DFSTestUtil.createFile(fs, new Path(zone, "f" + Integer.toString(i)), len,
+          (short) 1, 0xFEED);
+    }
+
+    // /zones/zone/dir/f should be reencrypted before /zones/zone/f[0-4]
+    final Path encFile = new Path(subdir, "f");
+    final Path lastEnc = new Path(zone, "f4");
+    final FileEncryptionInfo fei = getFileEncryptionInfo(encFile);
+    final FileEncryptionInfo feiLast = getFileEncryptionInfo(lastEnc);
+    fsn.getProvider().rollNewVersion(TEST_KEY);
+    fsn.getProvider().flush();
+    // mark pause after first checkpoint (5 files)
+    getEzManager().pauseForTestingAfterNthCheckpoint(1);
+    dfsAdmin.reencryptEncryptionZone(zone, ReencryptAction.START);
+    waitForReencryptedFiles(zone.toString(), 5);
+    assertKeyVersionChanged(encFile, fei);
+    assertKeyVersionEquals(lastEnc, feiLast);
+  }
+
+  @Test
+  public void testDeleteDuringReencrypt() throws Exception {
+    final int len = 8196;
+    final Path zoneParent = new Path("/zones");
+    final Path zone = new Path(zoneParent, "zone");
+    fsWrapper.mkdir(zone, FsPermission.getDirDefault(), true);
+    dfsAdmin.createEncryptionZone(zone, TEST_KEY, NO_TRASH);
+    for (int i = 0; i < 10; ++i) {
+      DFSTestUtil
+          .createFile(fs, new Path(zone, Integer.toString(i)), len, (short) 1,
+              0xFEED);
+    }
+    // test zone deleted during re-encrypt
+    getEzManager().pauseReencryptForTesting();
+    getEzManager().resetMetrics();
+    dfsAdmin.reencryptEncryptionZone(zone, ReencryptAction.START);
+    waitForQueuedZones(1);
+
+    fs.delete(zone, true);
+    getEzManager().resumeReencryptForTesting();
+    waitForTotalZones(0);
+    assertNull(getZoneStatus(zone.toString()));
+  }
+
+  @Test
+  public void testZoneDeleteDuringReencrypt() throws Exception {
+    final int len = 8196;
+    final Path zoneParent = new Path("/zones");
+    final Path zone = new Path(zoneParent, "zone");
+    fsWrapper.mkdir(zone, FsPermission.getDirDefault(), true);
+    dfsAdmin.createEncryptionZone(zone, TEST_KEY, NO_TRASH);
+    for (int i = 0; i < 10; ++i) {
+      DFSTestUtil
+          .createFile(fs, new Path(zone, Integer.toString(i)), len, (short) 1,
+              0xFEED);
+    }
+    // test zone deleted during re-encrypt's checkpointing
+    getEzManager().pauseForTestingAfterNthCheckpoint(1);
+    getEzManager().resetMetrics();
+    dfsAdmin.reencryptEncryptionZone(zone, ReencryptAction.START);
+    waitForReencryptedFiles(zone.toString(), 5);
+
+    fs.delete(zoneParent, true);
+    getEzManager().resumeReencryptForTesting();
+    waitForTotalZones(0);
+    assertNull(getEzManager().getZoneStatus(zone.toString()));
+  }
+
+  @Test
+  public void testRestartAfterReencrypt() throws Exception {
+    /* Setup dir as follows:
+     * /zones
+     * /zones/zone
+     * /zones/zone/[0-9]
+     * /zones/zone/dir
+     * /zones/zone/dir/f
+     */
+    final int len = 8196;
+    final Path zoneParent = new Path("/zones");
+    final Path zone = new Path(zoneParent, "zone");
+    fsWrapper.mkdir(zone, FsPermission.getDirDefault(), true);
+    dfsAdmin.createEncryptionZone(zone, TEST_KEY, NO_TRASH);
+    for (int i = 0; i < 10; ++i) {
+      DFSTestUtil
+          .createFile(fs, new Path(zone, Integer.toString(i)), len, (short) 1,
+              0xFEED);
+    }
+    final Path subdir = new Path(zone, "dir");
+    fsWrapper.mkdir(subdir, FsPermission.getDirDefault(), true);
+    DFSTestUtil.createFile(fs, new Path(subdir, "f"), len, (short) 1, 0xFEED);
+
+    final Path encFile0 = new Path(zone, "0");
+    final Path encFile9 = new Path(zone, "9");
+    final FileEncryptionInfo fei0 = getFileEncryptionInfo(encFile0);
+    final FileEncryptionInfo fei9 = getFileEncryptionInfo(encFile9);
+    fsn.getProvider().rollNewVersion(TEST_KEY);
+    fsn.getProvider().flush();
+    dfsAdmin.reencryptEncryptionZone(zone, ReencryptAction.START);
+    waitForReencryptedZones(1);
+
+    assertKeyVersionChanged(encFile0, fei0);
+    assertKeyVersionChanged(encFile9, fei9);
+
+    final FileEncryptionInfo fei0new = getFileEncryptionInfo(encFile0);
+    final FileEncryptionInfo fei9new = getFileEncryptionInfo(encFile9);
+    restartClusterDisableReencrypt();
+
+    assertKeyVersionEquals(encFile0, fei0new);
+    assertKeyVersionEquals(encFile9, fei9new);
+    assertNull("Re-encrypt queue should be empty after restart",
+        getReencryptionStatus().getNextUnprocessedZone());
+  }
+
+  @Test
+  public void testRestartDuringReencrypt() throws Exception {
+    /* Setup dir as follows:
+     * /zones
+     * /zones/zone
+     * /zones/zone/dir_empty
+     * /zones/zone/dir1/[0-9]
+     * /zones/zone/dir1/dir_empty1
+     * /zones/zone/dir2
+     * /zones/zone/dir2/dir_empty2
+     * /zones/zone/dir2/f
+     */
+    final int len = 8196;
+    final Path zoneParent = new Path("/zones");
+    final Path zone = new Path(zoneParent, "zone");
+    fsWrapper.mkdir(zone, FsPermission.getDirDefault(), true);
+    dfsAdmin.createEncryptionZone(zone, TEST_KEY, NO_TRASH);
+    fsWrapper
+        .mkdir(new Path(zone, "dir_empty"), FsPermission.getDirDefault(), true);
+    Path subdir = new Path(zone, "dir2");
+    fsWrapper.mkdir(subdir, FsPermission.getDirDefault(), true);
+    fsWrapper
+        .mkdir(new Path(subdir, "dir_empty2"), FsPermission.getDirDefault(),
+            true);
+    DFSTestUtil.createFile(fs, new Path(subdir, "f"), len, (short) 1, 0xFEED);
+    subdir = new Path(zone, "dir1");
+    for (int i = 0; i < 10; ++i) {
+      DFSTestUtil.createFile(fs,
+          new Path(subdir, Integer.toString(i)), len, (short) 1, 0xFEED);
+    }
+    fsWrapper.mkdir(new Path(subdir, "dir_empty1"),
+        FsPermission.getDirDefault(), true);
+
+    final Path encFile0 = new Path(subdir, "0");
+    final Path encFile9 = new Path(subdir, "9");
+    final FileEncryptionInfo fei0 = getFileEncryptionInfo(encFile0);
+    final FileEncryptionInfo fei9 = getFileEncryptionInfo(encFile9);
+    fsn.getProvider().rollNewVersion(TEST_KEY);
+    fsn.getProvider().flush();
+    // mark pause after first checkpoint (5 files)
+    getEzManager().pauseForTestingAfterNthCheckpoint(1);
+    dfsAdmin.reencryptEncryptionZone(zone, ReencryptAction.START);
+    waitForReencryptedFiles(zone.toString(), 5);
+
+    restartClusterDisableReencrypt();
+
+    Thread.sleep(10000);
+    final Long zoneId = fsn.getFSDirectory().getINode(zone.toString()).getId();
+    assertEquals("Re-encrypt should restore to the last checkpoint zone",
+        zoneId, getReencryptionStatus().getNextUnprocessedZone());
+    assertEquals("Re-encrypt should restore to the last checkpoint file",
+        new Path(subdir, "4").toString(),
+        getEzManager().getZoneStatus(zone.toString()).getLastProcessedFile());
+
+    getEzManager().resumeReencryptForTesting();
+    waitForReencryptedZones(1);
+    assertKeyVersionChanged(encFile0, fei0);
+    assertKeyVersionChanged(encFile9, fei9);
+    assertNull("Re-encrypt queue should be empty after restart",
+        getReencryptionStatus().getNextUnprocessedZone());
+    assertEquals(6, getZoneStatus(zone.toString()).filesReencrypted);
+  }
+
+  @Test
+  public void testRestartAfterReencryptAndCheckpoint() throws Exception {
+    final int len = 8196;
+    final Path zoneParent = new Path("/zones");
+    final Path zone = new Path(zoneParent, "zone");
+    fsWrapper.mkdir(zone, FsPermission.getDirDefault(), true);
+    dfsAdmin.createEncryptionZone(zone, TEST_KEY, NO_TRASH);
+    for (int i = 0; i < 10; ++i) {
+      DFSTestUtil
+          .createFile(fs, new Path(zone, Integer.toString(i)), len, (short) 1,
+              0xFEED);
+    }
+    final Path subdir = new Path(zone, "dir");
+    fsWrapper.mkdir(subdir, FsPermission.getDirDefault(), true);
+    DFSTestUtil.createFile(fs, new Path(subdir, "f"), len, (short) 1, 0xFEED);
+
+    final Path encFile0 = new Path(zone, "0");
+    final Path encFile9 = new Path(zone, "9");
+    final FileEncryptionInfo fei0 = getFileEncryptionInfo(encFile0);
+    final FileEncryptionInfo fei9 = getFileEncryptionInfo(encFile9);
+    fsn.getProvider().rollNewVersion(TEST_KEY);
+    fsn.getProvider().flush();
+    dfsAdmin.reencryptEncryptionZone(zone, ReencryptAction.START);
+    waitForReencryptedZones(1);
+
+    assertKeyVersionChanged(encFile0, fei0);
+    assertKeyVersionChanged(encFile9, fei9);
+
+    final FileEncryptionInfo fei0new = getFileEncryptionInfo(encFile0);
+    final FileEncryptionInfo fei9new = getFileEncryptionInfo(encFile9);
+    fs.setSafeMode(SafeModeAction.SAFEMODE_ENTER);
+    fs.saveNamespace();
+    fs.setSafeMode(SafeModeAction.SAFEMODE_LEAVE);
+    restartClusterDisableReencrypt();
+
+    assertKeyVersionEquals(encFile0, fei0new);
+    assertKeyVersionEquals(encFile9, fei9new);
+    assertNull("Re-encrypt queue should be empty after restart",
+        getReencryptionStatus().getNextUnprocessedZone());
+  }
+
+  @Test
+  public void testReencryptLoadedFromEdits() throws Exception {
+    final int len = 8196;
+    final Path zoneParent = new Path("/zones");
+    final Path zone = new Path(zoneParent, "zone");
+    fsWrapper.mkdir(zone, FsPermission.getDirDefault(), true);
+    dfsAdmin.createEncryptionZone(zone, TEST_KEY, NO_TRASH);
+    for (int i = 0; i < 10; ++i) {
+      DFSTestUtil
+          .createFile(fs, new Path(zone, Integer.toString(i)), len, (short) 1,
+              0xFEED);
+    }
+    final Path subdir = new Path(zone, "dir");
+    fsWrapper.mkdir(subdir, FsPermission.getDirDefault(), true);
+    DFSTestUtil.createFile(fs, new Path(subdir, "f"), len, (short) 1, 0xFEED);
+
+    final Path encFile0 = new Path(zone, "0");
+    final Path encFile9 = new Path(zone, "9");
+    final FileEncryptionInfo fei0 = getFileEncryptionInfo(encFile0);
+    final FileEncryptionInfo fei9 = getFileEncryptionInfo(encFile9);
+    fsn.getProvider().rollNewVersion(TEST_KEY);
+    fsn.getProvider().flush();
+    // disable re-encrypt for testing, and issue a command
+    getEzManager().pauseReencryptForTesting();
+    dfsAdmin.reencryptEncryptionZone(zone, ReencryptAction.START);
+
+    // verify after restart the command is loaded
+    restartClusterDisableReencrypt();
+    waitForQueuedZones(1);
+
+    // Let the re-encrypt to start running.
+    getEzManager().resumeReencryptForTesting();
+    waitForReencryptedZones(1);
+    assertKeyVersionChanged(encFile0, fei0);
+    assertKeyVersionChanged(encFile9, fei9);
+  }
+
+  @Test
+  public void testReencryptLoadedFromFsimage() throws Exception {
+    final int len = 8196;
+    final Path zoneParent = new Path("/zones");
+    final Path zone = new Path(zoneParent, "zone");
+    fsWrapper.mkdir(zone, FsPermission.getDirDefault(), true);
+    dfsAdmin.createEncryptionZone(zone, TEST_KEY, NO_TRASH);
+    for (int i = 0; i < 10; ++i) {
+      DFSTestUtil
+          .createFile(fs, new Path(zone, Integer.toString(i)), len, (short) 1,
+              0xFEED);
+    }
+    final Path subdir = new Path(zone, "dir");
+    fsWrapper.mkdir(subdir, FsPermission.getDirDefault(), true);
+    DFSTestUtil.createFile(fs, new Path(subdir, "f"), len, (short) 1, 0xFEED);
+
+    final Path encFile0 = new Path(zone, "0");
+    final Path encFile9 = new Path(zone, "9");
+    final FileEncryptionInfo fei0 = getFileEncryptionInfo(encFile0);
+    final FileEncryptionInfo fei9 = getFileEncryptionInfo(encFile9);
+    fsn.getProvider().rollNewVersion(TEST_KEY);
+    fsn.getProvider().flush();
+    // disable re-encrypt for testing, and issue a command
+    getEzManager().pauseReencryptForTesting();
+    dfsAdmin.reencryptEncryptionZone(zone, ReencryptAction.START);
+    waitForQueuedZones(1);
+
+    fs.setSafeMode(SafeModeAction.SAFEMODE_ENTER);
+    fs.saveNamespace();
+    fs.setSafeMode(SafeModeAction.SAFEMODE_LEAVE);
+
+    // verify after loading from fsimage the command is loaded
+    restartClusterDisableReencrypt();
+    waitForQueuedZones(1);
+
+    // Let the re-encrypt to start running.
+    getEzManager().resumeReencryptForTesting();
+    waitForReencryptedZones(1);
+    assertKeyVersionChanged(encFile0, fei0);
+    assertKeyVersionChanged(encFile9, fei9);
+  }
+
+  @Test
+  public void testReencryptCommandsQueuedOrdering() throws Exception {
+    final Path zoneParent = new Path("/zones");
+    final String zoneBaseName = zoneParent.toString() + "/zone";
+    final int numZones = 10;
+    for (int i = 0; i < numZones; ++i) {
+      final Path zone = new Path(zoneBaseName + i);
+      fsWrapper.mkdir(zone, FsPermission.getDirDefault(), true);
+      dfsAdmin.createEncryptionZone(zone, TEST_KEY, NO_TRASH);
+    }
+
+    // Disable re-encrypt for testing, and issue commands
+    getEzManager().pauseReencryptForTesting();
+    for (int i = 0; i < numZones; ++i) {
+      dfsAdmin.reencryptEncryptionZone(new Path(zoneBaseName + i),
+          ReencryptAction.START);
+    }
+    waitForQueuedZones(numZones);
+
+    // Verify commands are queued in the same order submitted
+    ReencryptionStatus rzs =
+        new ReencryptionStatus(getReencryptionStatus());
+    for (int i = 0; i < numZones; ++i) {
+      Long zoneId = fsn.getFSDirectory().getINode(zoneBaseName + i).getId();
+      assertEquals(zoneId, rzs.getNextUnprocessedZone());
+      rzs.removeZone(zoneId);
+    }
+
+    // Cancel some zones
+    Set<Integer> cancelled = new HashSet<>(Arrays.asList(0, 3, 4));
+    for (int cancel : cancelled) {
+      dfsAdmin.reencryptEncryptionZone(new Path(zoneBaseName + cancel),
+          ReencryptAction.CANCEL);
+    }
+
+    restartClusterDisableReencrypt();
+    waitForQueuedZones(numZones - cancelled.size());
+    rzs = new ReencryptionStatus(getReencryptionStatus());
+    for (int i = 0; i < numZones; ++i) {
+      if (cancelled.contains(i)) {
+        continue;
+      }
+      Long zoneId = fsn.getFSDirectory().getINode(zoneBaseName + i).getId();
+      assertEquals(zoneId, rzs.getNextUnprocessedZone());
+      rzs.removeZone(zoneId);
+    }
+
+    // Verify the same is true after loading from FSImage
+    fs.setSafeMode(SafeModeAction.SAFEMODE_ENTER);
+    fs.saveNamespace();
+    fs.setSafeMode(SafeModeAction.SAFEMODE_LEAVE);
+
+    restartClusterDisableReencrypt();
+    waitForQueuedZones(numZones - cancelled.size());
+    rzs = new ReencryptionStatus(getReencryptionStatus());
+    for (int i = 0; i < 10; ++i) {
+      if (cancelled.contains(i)) {
+        continue;
+      }
+      Long zoneId = fsn.getFSDirectory().getINode(zoneBaseName + i).getId();
+      assertEquals(zoneId, rzs.getNextUnprocessedZone());
+      rzs.removeZone(zoneId);
+    }
+  }
+
+  @Test
+  public void testReencryptNestedZones() throws Exception {
+    /* Setup dir as follows:
+     * / <- EZ
+     * /file
+     * /dir/dfile
+     * /level1  <- nested EZ
+     * /level1/fileL1-[0~2]
+     * /level1/level2/ <- nested EZ
+     * /level1/level2/fileL2-[0~3]
+     */
+    final int len = 8196;
+    final Path zoneRoot = new Path("/");
+    final Path zoneL1 = new Path(zoneRoot, "level1");
+    final Path zoneL2 = new Path(zoneL1, "level2");
+    final Path nonzoneDir = new Path(zoneRoot, "dir");
+    dfsAdmin.createEncryptionZone(zoneRoot, TEST_KEY, NO_TRASH);
+    DFSTestUtil
+        .createFile(fs, new Path(zoneRoot, "file"), len, (short) 1, 0xFEED);
+    DFSTestUtil
+        .createFile(fs, new Path(nonzoneDir, "dfile"), len, (short) 1, 0xFEED);
+    fsWrapper.mkdir(zoneL1, FsPermission.getDirDefault(), true);
+    dfsAdmin.createEncryptionZone(zoneL1, TEST_KEY, NO_TRASH);
+    for (int i = 0; i < 3; ++i) {
+      DFSTestUtil
+          .createFile(fs, new Path(zoneL1, "fileL1-" + i), len, (short) 1,
+              0xFEED);
+    }
+    fsWrapper.mkdir(zoneL2, FsPermission.getDirDefault(), true);
+    dfsAdmin.createEncryptionZone(zoneL2, TEST_KEY, NO_TRASH);
+    for (int i = 0; i < 4; ++i) {
+      DFSTestUtil
+          .createFile(fs, new Path(zoneL2, "fileL2-" + i), len, (short) 1,
+              0xFEED);
+    }
+
+    // Disable re-encrypt, send re-encrypt on '/', verify queue
+    getEzManager().pauseReencryptForTesting();
+    dfsAdmin.reencryptEncryptionZone(zoneRoot, ReencryptAction.START);
+    waitForQueuedZones(1);
+    ReencryptionStatus rzs = getReencryptionStatus();
+    assertEquals(
+        (Long) fsn.getFSDirectory().getINode(zoneRoot.toString()).getId(),
+        rzs.getNextUnprocessedZone());
+
+    // Resume re-encrypt, verify files re-encrypted
+    getEzManager().resumeReencryptForTesting();
+    waitForZoneCompletes(zoneRoot.toString());
+    assertEquals(2, getZoneStatus(zoneRoot.toString()).filesReencrypted);
+
+    // Same tests on a child EZ.
+    getEzManager().resetMetrics();
+    getEzManager().pauseReencryptForTesting();
+    dfsAdmin.reencryptEncryptionZone(zoneL1, ReencryptAction.START);
+    waitForQueuedZones(1);
+    rzs = getReencryptionStatus();
+    assertEquals(
+        (Long) fsn.getFSDirectory().getINode(zoneL1.toString()).getId(),
+        rzs.getNextUnprocessedZone());
+
+    getEzManager().resumeReencryptForTesting();
+    waitForZoneCompletes(zoneL1.toString());
+    assertEquals(3, getZoneStatus(zoneL1.toString()).filesReencrypted);
+  }
+
+  @Test
+  public void testReencryptRaceCreate() throws Exception {
+    /* Setup dir as follows:
+     * /dir/file[0~9]
+     */
+    final int len = 8196;
+    final Path zone = new Path("/dir");
+    fsWrapper.mkdir(zone, FsPermission.getDirDefault(), true);
+    dfsAdmin.createEncryptionZone(zone, TEST_KEY, NO_TRASH);
+    int expected = 10;
+    for (int i = 0; i < 10; ++i) {
+      DFSTestUtil
+          .createFile(fs, new Path(zone, "file" + i), len, (short) 1, 0xFEED);
+    }
+
+    // Issue the command re-encrypt and pause it
+    getEzManager().pauseReencryptForTesting();
+    dfsAdmin.reencryptEncryptionZone(zone, ReencryptAction.START);
+    waitForQueuedZones(1);
+
+    // mark pause after first checkpoint (5 files)
+    getEzManager().pauseForTestingAfterNthCheckpoint(1);
+    // Resume the re-encrypt thread
+    getEzManager().resumeReencryptForTesting();
+    waitForReencryptedFiles(zone.toString(), 5);
+
+    /* creates the following:
+     * /dir/file8[0~5]
+     * /dir/dirsub/file[10-14]
+     * /dir/sub/file[15-19]
+     */
+    for (int i = 0; i < 6; ++i) {
+      DFSTestUtil
+          .createFile(fs, new Path(zone, "file8" + i), len, (short) 1, 0xFEED);
+    }
+    expected += 6;
+    // we don't care newly created files since they should already use new edek.
+    // so naturally processes the listing from last checkpoint
+    final Path subdir = new Path(zone, "dirsub");
+    fsWrapper.mkdir(subdir, FsPermission.getDirDefault(), true);
+    for (int i = 10; i < 15; ++i) {
+      DFSTestUtil
+          .createFile(fs, new Path(subdir, "file" + i), len, (short) 1, 0xFEED);
+    }
+    // the above are created before checkpoint position, so not inlcuded
+
+    final Path sub = new Path(zone, "sub");
+    fsWrapper.mkdir(sub, FsPermission.getDirDefault(), true);
+    for (int i = 15; i < 20; ++i) {
+      DFSTestUtil
+          .createFile(fs, new Path(sub, "file" + i), len, (short) 1, 0xFEED);
+    }
+    expected += 5;
+
+    // resume re-encrypt thread which was paused after first checkpoint
+    getEzManager().resumeReencryptForTesting();
+    waitForZoneCompletes(zone.toString());
+    assertEquals(expected, getZoneStatus(zone.toString()).filesReencrypted);
+  }
+
+  @Test
+  public void testReencryptRaceDelete() throws Exception {
+    /* Setup dir as follows:
+     * /dir/file[0~9]
+     * /dir/subdir/file[10-14]
+     */
+    final int len = 8196;
+    final Path zone = new Path("/dir");
+    fsWrapper.mkdir(zone, FsPermission.getDirDefault(), true);
+    dfsAdmin.createEncryptionZone(zone, TEST_KEY, NO_TRASH);
+    int expected = 15;
+    for (int i = 0; i < 10; ++i) {
+      DFSTestUtil
+          .createFile(fs, new Path(zone, "file" + i), len, (short) 1, 0xFEED);
+    }
+    final Path subdir = new Path(zone, "subdir");
+    fsWrapper.mkdir(subdir, FsPermission.getDirDefault(), true);
+    for (int i = 10; i < 15; ++i) {
+      DFSTestUtil
+          .createFile(fs, new Path(subdir, "file" + i), len, (short) 1, 0xFEED);
+    }
+
+    // Issue the command re-encrypt and pause it
+    getEzManager().pauseReencryptForTesting();
+    dfsAdmin.reencryptEncryptionZone(zone, ReencryptAction.START);
+    waitForQueuedZones(1);
+
+    // proceed to first checkpoint (5 files), delete files/subdir, then resume
+    getEzManager().pauseForTestingAfterNthCheckpoint(1);
+    getEzManager().resumeReencryptForTesting();
+    waitForReencryptedFiles(zone.toString(), 5);
+
+    fsWrapper.delete(new Path(zone, "file5"), true);
+    fsWrapper.delete(new Path(zone, "file8"), true);
+    expected -= 2;
+    fsWrapper.delete(subdir, true);
+    expected -= 5;
+
+    // resume re-encrypt thread which was paused after first checkpoint
+    getEzManager().resumeReencryptForTesting();
+    waitForZoneCompletes(zone.toString());
+    assertEquals(expected, getZoneStatus(zone.toString()).filesReencrypted);
+  }
+
+  @Test
+  public void testReencryptRaceDeleteCreate() throws Exception {
+    /* Setup dir as follows:
+     * /dir/file[0~9]
+     */
+    final int len = 8196;
+    final Path zone = new Path("/dir");
+    fsWrapper.mkdir(zone, FsPermission.getDirDefault(), true);
+    dfsAdmin.createEncryptionZone(zone, TEST_KEY, NO_TRASH);
+    int expected = 10;
+    for (int i = 0; i < 10; ++i) {
+      DFSTestUtil
+          .createFile(fs, new Path(zone, "file" + i), len, (short) 1, 0xFEED);
+    }
+
+    // Issue the command re-encrypt and pause it
+    getEzManager().pauseReencryptForTesting();
+    dfsAdmin.reencryptEncryptionZone(zone, ReencryptAction.START);
+    waitForQueuedZones(1);
+
+    // mark pause after first checkpoint (5 files)
+    getEzManager().pauseForTestingAfterNthCheckpoint(1);
+    // Resume the re-encrypt thread
+    getEzManager().resumeReencryptForTesting();
+    waitForReencryptedFiles(zone.toString(), 5);
+
+    final Path recreated = new Path(zone, "file9");
+    fsWrapper.delete(recreated, true);
+    DFSTestUtil.createFile(fs, recreated, len, (short) 2, 0xFEED);
+
+    // resume re-encrypt thread which was pause after first checkpoint
+    getEzManager().resumeReencryptForTesting();
+    waitForZoneCompletes(zone.toString());
+    assertEquals(expected, getZoneStatus(zone.toString()).filesReencrypted);
+  }
+
+  // TODO: HDFS-11203
+  // @Test
+  public void testReencryptRaceRename() throws Exception {
+    /* Setup dir as follows:
+     * /dir/file[0~9]
+     * /dir/subdir/file[10-14]
+     */
+    final int len = 8196;
+    final Path zone = new Path("/dir");
+    fsWrapper.mkdir(zone, FsPermission.getDirDefault(), true);
+    dfsAdmin.createEncryptionZone(zone, TEST_KEY, NO_TRASH);
+    int expected = 15;
+    for (int i = 0; i < 10; ++i) {
+      DFSTestUtil
+          .createFile(fs, new Path(zone, "file" + i), len, (short) 1, 0xFEED);
+    }
+    final Path subdir = new Path(zone, "subdir");
+    fsWrapper.mkdir(subdir, FsPermission.getDirDefault(), true);
+    for (int i = 10; i < 15; ++i) {
+      DFSTestUtil
+          .createFile(fs, new Path(subdir, "file" + i), len, (short) 1, 0xFEED);
+    }
+
+    // Issue the command re-encrypt and pause it
+    getEzManager().pauseReencryptForTesting();
+    dfsAdmin.reencryptEncryptionZone(zone, ReencryptAction.START);
+    waitForQueuedZones(1);
+
+    // mark pause after first checkpoint (5 files)
+    getEzManager().pauseForTestingAfterNthCheckpoint(1);
+    // Resume the re-encrypt thread
+    getEzManager().resumeReencryptForTesting();
+    waitForReencryptedFiles(zone.toString(), 5);
+
+    // rename a file to a position before checkpoint
+    // rename a file to a position after checkpoint
+    // rename a dir to a position before checkpoint
+    fsWrapper.rename(new Path(zone, "file8"), new Path(zone, "file08"));
+    fsWrapper.rename(new Path(zone, "file9"), new Path(zone, "file99"));
+    fsWrapper.rename(subdir, new Path(zone, "dirsub"));
+
+    // resume re-encrypt thread which was pause after first checkpoint
+    getEzManager().resumeReencryptForTesting();
+    waitForZoneCompletes(zone.toString());
+    assertEquals(expected, getZoneStatus(zone.toString()).filesReencrypted);
+  }
+
+  @Test
+  public void testReencryptSnapshots() throws Exception {
+    /* Setup test dir:
+     * /zones/zone/[0-9]
+     * /dir/f
+     *
+     * /zones/zone is snapshottable, and rename file 5 to 5new.
+     */
+    final int len = 8196;
+    final Path zoneParent = new Path("/zones");
+    final Path zone = new Path(zoneParent, "zone");
+    fsWrapper.mkdir(zone, FsPermission.getDirDefault(), true);
+    dfsAdmin.allowSnapshot(zone);
+    dfsAdmin.createEncryptionZone(zone, TEST_KEY, NO_TRASH);
+    for (int i = 0; i < 10; ++i) {
+      DFSTestUtil
+          .createFile(fs, new Path(zone, Integer.toString(i)), len, (short) 1,
+              0xFEED);
+    }
+    final Path subdir = new Path("/dir");
+    fsWrapper.mkdir(subdir, FsPermission.getDirDefault(), true);
+    DFSTestUtil.createFile(fs, new Path(subdir, "f"), len, (short) 1, 0xFEED);
+    // create a snapshot and rename a file, so INodeReference is created.
+    final Path zoneSnap = fs.createSnapshot(zone);
+    fsWrapper.rename(new Path(zone, "5"), new Path(zone, "5new"));
+
+    // test re-encrypt on snapshot dir
+    final Path encFile1 = new Path(zone, "0");
+    final FileEncryptionInfo fei0 = getFileEncryptionInfo(encFile1);
+    fsn.getProvider().rollNewVersion(TEST_KEY);
+    fsn.getProvider().flush();
+    try {
+      dfsAdmin.reencryptEncryptionZone(zoneSnap, ReencryptAction.START);
+      fail("Reencrypt command on snapshot path should fail.");
+    } catch (RemoteException expected) {
+      LOG.info("Expected exception", expected);
+      assertTrue(expected
+          .unwrapRemoteException() instanceof SnapshotAccessControlException);
+    }
+    dfsAdmin.reencryptEncryptionZone(zone, ReencryptAction.START);
+    waitForReencryptedZones(1);
+    waitForReencryptedFiles(zone.toString(), 10);
+    assertKeyVersionChanged(encFile1, fei0);
+  }
+
+  private void restartClusterDisableReencrypt() throws IOException {
+    cluster.getConfiguration(0)
+        .setTimeDuration(DFSConfigKeys.DFS_NAMENODE_REENCRYPT_INTERVAL_KEY, 1,
+            TimeUnit.SECONDS);
+    cluster.restartNameNode(false);
+    fsn = cluster.getNamesystem();
+    getEzManager().pauseReencryptForTesting();
+    cluster.waitActive();
+  }
+
+  private void waitForReencryptedZones(final int expected)
+      throws TimeoutException, InterruptedException {
+    LOG.info("Waiting for re-encrypted zones to be {}", expected);
+    try {
+      GenericTestUtils.waitFor(new Supplier<Boolean>() {
+        @Override
+        public Boolean get() {
+          return getReencryptionStatus().zonesReencrypted == expected;
+        }
+      }, 100, 10000);
+    } finally {
+      LOG.info("Re-encrypted zones = {} ",
+          getReencryptionStatus().zonesReencrypted);
+    }
+  }
+
+  private void waitForQueuedZones(final int expected)
+      throws TimeoutException, InterruptedException {
+    LOG.info("Waiting for queued zones for re-encryption to be {}", expected);
+    GenericTestUtils.waitFor(new Supplier<Boolean>() {
+      @Override
+      public Boolean get() {
+        return getReencryptionStatus().zonesQueued() == expected;
+      }
+    }, 100, 10000);
+  }
+
+  private void waitForTotalZones(final int expected)
+      throws TimeoutException, InterruptedException {
+    LOG.info("Waiting for queued zones for re-encryption to be {}", expected);
+    GenericTestUtils.waitFor(new Supplier<Boolean>() {
+      @Override
+      public Boolean get() {
+        return getReencryptionStatus().zonesTotal() == expected;
+      }
+    }, 100, 10000);
+  }
+
+  private void waitForZoneCompletes(final String zone)
+      throws TimeoutException, InterruptedException {
+    LOG.info("Waiting for re-encryption zone {} to complete.", zone);
+    GenericTestUtils.waitFor(new Supplier<Boolean>() {
+      @Override
+      public Boolean get() {
+        try {
+          return getZoneStatus(zone).getState()
+              == ReencryptionStatus.State.Completed;
+        } catch (Exception ex) {
+          LOG.error("Exception caught", ex);
+          return false;
+        }
+      }
+    }, 100, 10000);
+  }
+
+  private EncryptionZoneManager getEzManager() {
+    return fsn.getFSDirectory().ezManager;
+  }
+
+  private ReencryptionStatus getReencryptionStatus() {
+    return getEzManager().getReencryptionStatus();
+  }
+
+  private ZoneStatus getZoneStatus(final String zone) throws IOException {
+    return getEzManager().getZoneStatus(zone);
+  }
+
+  private void waitForReencryptedFiles(final String zone, final int expected)
+      throws TimeoutException, InterruptedException {
+    LOG.info("Waiting for total re-encrypted file count to be {}", expected);
+    GenericTestUtils.waitFor(new Supplier<Boolean>() {
+      @Override
+      public Boolean get() {
+        try {
+          return getZoneStatus(zone).filesReencrypted == expected;
+        } catch (IOException e) {
+          return false;
+        }
+      }
+    }, 100, 10000);
+  }
+
+  private void assertKeyVersionChanged(final Path file,
+      final FileEncryptionInfo original) throws Exception {
+    final FileEncryptionInfo actual = getFileEncryptionInfo(file);
+    assertNotEquals("KeyVersion should be different",
+        original.getEzKeyVersionName(), actual.getEzKeyVersionName());
+  }
+
+  private void assertKeyVersionEquals(final Path file,
+      final FileEncryptionInfo expected) throws Exception {
+    final FileEncryptionInfo actual = getFileEncryptionInfo(file);
+    assertEquals("KeyVersion should be the same",
+        expected.getEzKeyVersionName(), actual.getEzKeyVersionName());
+  }
+
+  @Test
+  public void testReencryptCancel() throws Exception {
+    /* Setup test dir:
+     * /zones/zone/[0-9]
+     * /dir/f
+     */
+    final int len = 8196;
+    final Path zoneParent = new Path("/zones");
+    final Path zone = new Path(zoneParent, "zone");
+    fsWrapper.mkdir(zone, FsPermission.getDirDefault(), true);
+    dfsAdmin.createEncryptionZone(zone, TEST_KEY, NO_TRASH);
+    for (int i = 0; i < 10; ++i) {
+      DFSTestUtil.createFile(fs, new Path(zone, Integer.toString(i)), len,
+          (short) 1, 0xFEED);
+    }
+    final Path subdir = new Path("/dir");
+    fsWrapper.mkdir(subdir, FsPermission.getDirDefault(), true);
+    DFSTestUtil.createFile(fs, new Path(subdir, "f"), len, (short) 1, 0xFEED);
+
+    // disable, test basic
+    getEzManager().pauseReencryptForTesting();
+    dfsAdmin.reencryptEncryptionZone(zone, ReencryptAction.START);
+    waitForQueuedZones(1);
+
+    dfsAdmin.reencryptEncryptionZone(zone, ReencryptAction.CANCEL);
+    waitForZoneCompletes(zone.toString());
+    assertEquals(0, getZoneStatus(zone.toString()).filesReencrypted);
+
+    // test same command resubmission
+    try {
+      dfsAdmin.reencryptEncryptionZone(zone, ReencryptAction.CANCEL);
+    } catch (RemoteException expected) {
+      LOG.info("Expected exception caught.", expected);
+      assertExceptionContains("not under re-encryption", expected);
+    }
+
+    // test cancelling half-way
+    getEzManager().pauseForTestingAfterNthCheckpoint(1);
+    getEzManager().resumeReencryptForTesting();
+    dfsAdmin.reencryptEncryptionZone(zone, ReencryptAction.START);
+    waitForReencryptedFiles(zone.toString(), 5);
+    dfsAdmin.reencryptEncryptionZone(zone, ReencryptAction.CANCEL);
+    getEzManager().resumeReencryptForTesting();
+    waitForZoneCompletes(zone.toString());
+    assertEquals(5, getZoneStatus(zone.toString()).filesReencrypted);
+    assertNull(getEzManager().getZoneStatus(zone.toString()).getLastProcessedFile());
+    assertNull(getReencryptionStatus().getNextUnprocessedZone());
+
+    // test cancelling non-EZ dir
+    try {
+      dfsAdmin.reencryptEncryptionZone(subdir, ReencryptAction.CANCEL);
+      fail("Re-encrypting non-EZ should fail");
+    } catch (RemoteException expected) {
+      LOG.info("Expected exception caught.", expected);
+      assertExceptionContains("not the root of an encryption zone", expected);
+    }
+
+    // test cancelling non-existing dir
+    try {
+      dfsAdmin.reencryptEncryptionZone(new Path(zone, "notexist"),
+          ReencryptAction.CANCEL);
+      fail("Re-encrypting non-existing dir should fail");
+    } catch (RemoteException expected) {
+      LOG.info("Expected exception caught.", expected);
+      assertTrue(
+          expected.unwrapRemoteException() instanceof FileNotFoundException);
+    }
+
+    // test cancelling directly on a EZ file
+    final Path encFile = new Path(zone, "0");
+    try {
+      dfsAdmin.reencryptEncryptionZone(encFile, ReencryptAction.CANCEL);
+      fail("Re-encrypting on a file should fail");
+    } catch (RemoteException expected) {
+      LOG.info("Expected exception caught.", expected);
+      assertExceptionContains("not the root of an encryption zone", expected);
+    }
+
+    // final check - should only had 5 files re-encrypted overall.
+    assertEquals(5, getZoneStatus(zone.toString()).filesReencrypted);
+  }
+
+  // TODO: status.
 }

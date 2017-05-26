@@ -81,6 +81,9 @@ public class TestOfflineEditsViewer {
     return b.build();
   }
 
+  private final PrintStream sysOut = System.out;
+  private final PrintStream sysErr = System.err;
+
   @Rule
   public final TemporaryFolder folder = new TemporaryFolder();
 
@@ -92,6 +95,8 @@ public class TestOfflineEditsViewer {
   @After
   public void tearDown() throws IOException {
     nnHelper.shutdownCluster();
+    System.setOut(sysOut);
+    System.setOut(sysErr);
   }
 
   /**

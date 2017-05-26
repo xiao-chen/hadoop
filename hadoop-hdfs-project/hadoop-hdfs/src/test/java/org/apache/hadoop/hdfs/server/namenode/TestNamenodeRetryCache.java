@@ -23,6 +23,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -30,10 +31,12 @@ import java.util.Iterator;
 import java.util.Map;
 
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.crypto.key.JavaKeyStoreProvider;
+import org.apache.hadoop.fs.CommonConfigurationKeysPublic;
 import org.apache.hadoop.fs.CreateFlag;
+import org.apache.hadoop.fs.FileSystemTestHelper;
 import org.apache.hadoop.fs.Options.Rename;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.fs.UnresolvedLinkException;
 import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.ha.HAServiceProtocol.HAServiceState;
 import org.apache.hadoop.hdfs.DFSConfigKeys;
@@ -85,6 +88,8 @@ public class TestNamenodeRetryCache {
   private static int callId = 100;
   private static Configuration conf;
   private static final int BlockSize = 512;
+  private FileSystemTestHelper fsHelper;
+  private File testRootDir;
   
   /** Start a cluster */
   @Before
@@ -93,8 +98,17 @@ public class TestNamenodeRetryCache {
     conf.setLong(DFSConfigKeys.DFS_BLOCK_SIZE_KEY, BlockSize);
     conf.setBoolean(DFSConfigKeys.DFS_NAMENODE_ENABLE_RETRY_CACHE_KEY, true);
     conf.setBoolean(DFSConfigKeys.DFS_NAMENODE_ACLS_ENABLED_KEY, true);
+
+    // setup key provider to test hdfs encryption.
+    fsHelper = new FileSystemTestHelper();
+    String testRoot = fsHelper.getTestRootDir();
+    testRootDir = new File(testRoot).getAbsoluteFile();
+    conf.set(CommonConfigurationKeysPublic.HADOOP_SECURITY_KEY_PROVIDER_PATH,
+        JavaKeyStoreProvider.SCHEME_NAME + "://file" + new Path(
+            testRootDir.toString(), "test.jks").toUri());
     cluster = new MiniDFSCluster.Builder(conf).build();
     cluster.waitActive();
+    DFSTestUtil.createKey(DFSTestUtil.TEST_KEY, cluster, conf);
     nnRpc = cluster.getNameNode().getRpcServer();
     filesystem = cluster.getFileSystem();
   }
@@ -434,10 +448,12 @@ public class TestNamenodeRetryCache {
     DFSTestUtil.runOperations(cluster, filesystem, conf, BlockSize, 0);
     FSNamesystem namesystem = cluster.getNamesystem();
 
-    LightWeightCache<CacheEntry, CacheEntry> cacheSet = 
-        (LightWeightCache<CacheEntry, CacheEntry>) namesystem.getRetryCache().getCacheSet();
-    assertEquals("Retry cache size is wrong", 26, cacheSet.size());
-    
+    LightWeightCache<CacheEntry, CacheEntry> cacheSet =
+        (LightWeightCache<CacheEntry, CacheEntry>) namesystem.getRetryCache()
+            .getCacheSet();
+    assertEquals("Retry cache size is wrong", DFSTestUtil.NUM_OPERATIONS_RUN,
+        cacheSet.size());
+
     Map<CacheEntry, CacheEntry> oldEntries = 
         new HashMap<CacheEntry, CacheEntry>();
     Iterator<CacheEntry> iter = cacheSet.iterator();
@@ -455,7 +471,8 @@ public class TestNamenodeRetryCache {
     assertTrue(namesystem.hasRetryCache());
     cacheSet = (LightWeightCache<CacheEntry, CacheEntry>) namesystem
         .getRetryCache().getCacheSet();
-    assertEquals("Retry cache size is wrong", 26, cacheSet.size());
+    assertEquals("Retry cache size is wrong", DFSTestUtil.NUM_OPERATIONS_RUN,
+        cacheSet.size());
     iter = cacheSet.iterator();
     while (iter.hasNext()) {
       CacheEntry entry = iter.next();

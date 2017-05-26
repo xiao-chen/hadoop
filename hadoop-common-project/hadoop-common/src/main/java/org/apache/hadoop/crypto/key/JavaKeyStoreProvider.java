@@ -332,7 +332,8 @@ public class JavaKeyStoreProvider extends KeyProvider {
         if (!keyStore.containsAlias(versionName)) {
           return null;
         }
-        key = (SecretKeySpec) keyStore.getKey(versionName, password);
+        Key kkk = keyStore.getKey(versionName, password);
+        key = (SecretKeySpec) kkk;
       } catch (KeyStoreException e) {
         throw new IOException("Can't get key " + versionName + " from " +
                               path, e);

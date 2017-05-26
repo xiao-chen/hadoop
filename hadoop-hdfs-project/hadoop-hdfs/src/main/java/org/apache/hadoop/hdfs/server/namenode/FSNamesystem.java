@@ -89,6 +89,7 @@ import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_REPLICATION_DEFAULT;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_REPLICATION_KEY;
 import static org.apache.hadoop.hdfs.server.namenode.FSDirStatAndListingOp.*;
 
+import org.apache.hadoop.crypto.key.KeyProvider;
 import org.apache.hadoop.hdfs.protocol.BlocksStats;
 import org.apache.hadoop.hdfs.protocol.ECBlockGroupsStats;
 import org.apache.hadoop.hdfs.protocol.OpenFileEntry;
@@ -197,6 +198,7 @@ import org.apache.hadoop.hdfs.protocol.ErasureCodingPolicy;
 import org.apache.hadoop.hdfs.protocol.EncryptionZone;
 import org.apache.hadoop.hdfs.protocol.ExtendedBlock;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants.DatanodeReportType;
+import org.apache.hadoop.hdfs.protocol.HdfsConstants.ReencryptAction;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants.SafeModeAction;
 import org.apache.hadoop.hdfs.protocol.HdfsFileStatus;
 import org.apache.hadoop.hdfs.protocol.IllegalECPolicyException;
@@ -1227,6 +1229,8 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
       dir.updateCountForQuota();
       // Enable quota checks.
       dir.enableQuotaChecks();
+      dir.ezManager.startReencryptThread();
+
       if (haEnabled) {
         // Renew all of the leases before becoming active.
         // This is because, while we were in standby mode,
@@ -1317,6 +1321,9 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
         // Update the fsimage with the last txid that we wrote
         // so that the tailer starts from the right spot.
         getFSImage().updateLastAppliedTxIdFromWritten();
+      }
+      if (dir != null) {
+        dir.ezManager.stopReencryptThread();
       }
       if (cacheManager != null) {
         cacheManager.stopMonitorThread();
@@ -7012,6 +7019,99 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
       readUnlock(operationName);
       logAuditEvent(success, operationName, null);
     }
+  }
+
+  void reencryptEncryptionZone(final String zone, final ReencryptAction action,
+      final boolean logRetryCache) throws IOException {
+    boolean success = false;
+    try {
+      checkSuperuserPrivilege();
+      checkOperation(OperationCategory.WRITE);
+      checkNameNodeSafeMode("NameNode in safemode, cannot " + action
+          + " re-encryption on zone " + zone);
+      Preconditions.checkNotNull(zone,
+          "Can't " + action + " re-encrypt since zone is null.");
+      if (provider == null) {
+        throw new IOException("Can't " + action + " re-encrypt zone " + zone
+            + " since no key provider is configured.");
+      }
+      reencryptEncryptionZoneInt(zone, action, logRetryCache);
+      success = true;
+    } finally {
+      logAuditEvent(success, action + "reencryption", zone, null, null);
+    }
+  }
+
+  private void reencryptEncryptionZoneInt(final String zone,
+      final ReencryptAction action, final boolean logRetryCache)
+      throws IOException {
+    FSPermissionChecker pc = getPermissionChecker();
+    // get keyVersionName out of the lock.
+    final String keyVersionName = getLastKeyVersionName(zone, pc);
+    INodesInPath iip;
+    writeLock();
+    try {
+      checkSuperuserPrivilege();
+      checkOperation(OperationCategory.WRITE);
+      checkNameNodeSafeMode("NameNode in safemode, cannot " + action
+          + " re-encryption on zone " + zone);
+      iip = dir.resolvePath(pc, zone, DirOp.WRITE);
+      if (iip.getLastINode() == null) {
+        throw new FileNotFoundException(zone + " does not exist.");
+      }
+      switch (action) {
+      case START:
+        FSDirEncryptionZoneOp
+            .reencryptEncryptionZone(dir, iip, keyVersionName, logRetryCache);
+        break;
+      case CANCEL:
+        FSDirEncryptionZoneOp
+            .cancelReencryptEncryptionZone(dir, iip, logRetryCache);
+        break;
+      default:
+        throw new IOException(
+            "Re-encryption action " + action + " is not supported");
+      }
+    } finally {
+      writeUnlock();
+    }
+    getEditLog().logSync();
+    // TODO: logauditevent
+  }
+
+  /**
+   * Get the last key version name for the given EZ. This will contact
+   * the KMS to getKeyVersions.
+   * @param zone the encryption zone
+   * @param pc the permission checker
+   * @return the last element from the list of keyVersionNames returned by KMS.
+   * @throws IOException
+   */
+  private String getLastKeyVersionName(final String zone,
+      final FSPermissionChecker pc) throws IOException {
+    final EncryptionZone ez;
+    readLock();
+    dir.readLock();
+    try {
+      checkOperation(OperationCategory.READ);
+      final INodesInPath iip = dir.resolvePath(pc, zone, DirOp.READ);
+      if (iip.getLastINode() == null) {
+        throw new FileNotFoundException(zone + " does not exist.");
+      }
+      dir.ezManager.checkEncryptionZoneRoot(iip.getLastINode());
+      ez = FSDirEncryptionZoneOp.getEZForPath(dir, iip);
+    } finally {
+      dir.readUnlock();
+      readUnlock();
+    }
+    // Contact KMS out of locks.
+    List<KeyProvider.KeyVersion> kvs =
+        dir.getProvider().getKeyVersions(ez.getKeyName());
+    Preconditions.checkArgument(!kvs.isEmpty(),
+        "No key versions for key name " + ez.getKeyName());
+    // TODO: not sure if this assumption makes sense - may need to add a new
+    // getLatestKeyVersion(keyname) API to KeyProvider?
+    return kvs.get(kvs.size() - 1).getVersionName();
   }
 
   /**

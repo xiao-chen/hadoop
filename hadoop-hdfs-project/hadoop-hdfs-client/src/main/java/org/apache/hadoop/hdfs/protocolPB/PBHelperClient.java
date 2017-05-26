@@ -83,6 +83,7 @@ import org.apache.hadoop.hdfs.protocol.ExtendedBlock;
 import org.apache.hadoop.hdfs.protocol.FsPermissionExtension;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants.DatanodeReportType;
+import org.apache.hadoop.hdfs.protocol.HdfsConstants.ReencryptAction;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants.RollingUpgradeAction;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants.SafeModeAction;
 import org.apache.hadoop.hdfs.protocol.HdfsFileStatus;
@@ -128,6 +129,7 @@ import org.apache.hadoop.hdfs.protocol.proto.ClientNamenodeProtocolProtos.SafeMo
 import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.ShortCircuitShmIdProto;
 import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.ShortCircuitShmSlotProto;
 import org.apache.hadoop.hdfs.protocol.proto.EncryptionZonesProtos.EncryptionZoneProto;
+import org.apache.hadoop.hdfs.protocol.proto.EncryptionZonesProtos.ReencryptActionProto;
 import org.apache.hadoop.hdfs.protocol.proto.HdfsProtos;
 import org.apache.hadoop.hdfs.protocol.proto.HdfsProtos.AccessModeProto;
 import org.apache.hadoop.hdfs.protocol.proto.HdfsProtos.AddECPolicyResponseProto;
@@ -177,6 +179,7 @@ import org.apache.hadoop.hdfs.security.token.delegation.DelegationTokenIdentifie
 import org.apache.hadoop.hdfs.server.protocol.DatanodeStorage;
 import org.apache.hadoop.hdfs.server.protocol.DatanodeStorage.State;
 import org.apache.hadoop.hdfs.server.protocol.DatanodeStorageReport;
+import org.apache.hadoop.hdfs.server.protocol.ReencryptionInfo;
 import org.apache.hadoop.hdfs.server.protocol.StorageReport;
 import org.apache.hadoop.hdfs.protocol.proto.ErasureCodingProtos.CodecProto;
 import org.apache.hadoop.hdfs.shortcircuit.ShortCircuitShm.ShmId;
@@ -1626,6 +1629,17 @@ public class PBHelperClient {
     return builder.build();
   }
 
+  public static ReencryptActionProto convert(ReencryptAction a) {
+    switch (a) {
+    case CANCEL:
+      return ReencryptActionProto.CANCEL_REENCRYPT;
+    case START:
+      return ReencryptActionProto.START_REENCRYPT;
+    default:
+      throw new IllegalArgumentException("Unexpected value: " + a);
+    }
+  }
+
   public static RollingUpgradeActionProto convert(RollingUpgradeAction a) {
     switch (a) {
     case QUERY:
@@ -2226,6 +2240,17 @@ public class PBHelperClient {
     }
   }
 
+  public static ReencryptAction convert(ReencryptActionProto a) {
+    switch (a) {
+    case CANCEL_REENCRYPT:
+      return ReencryptAction.CANCEL;
+    case START_REENCRYPT:
+      return ReencryptAction.START;
+    default:
+      throw new IllegalArgumentException("Unexpected value: " + a);
+    }
+  }
+
   public static RollingUpgradeAction convert(RollingUpgradeActionProto a) {
     switch (a) {
     case QUERY:
@@ -2677,16 +2702,24 @@ public class PBHelperClient {
         .build();
   }
 
-  public static HdfsProtos.ZoneEncryptionInfoProto convert(
-      CipherSuite suite, CryptoProtocolVersion version, String keyName) {
+  public static HdfsProtos.ZoneEncryptionInfoProto convert(CipherSuite suite,
+      CryptoProtocolVersion version, String keyName) {
+    return convert(suite, version, keyName, null);
+  }
+
+  public static HdfsProtos.ZoneEncryptionInfoProto convert(CipherSuite suite,
+      CryptoProtocolVersion version, String keyName,
+      HdfsProtos.ReencryptionInfoProto proto) {
     if (suite == null || version == null || keyName == null) {
       return null;
     }
-    return HdfsProtos.ZoneEncryptionInfoProto.newBuilder()
-        .setSuite(convert(suite))
-        .setCryptoProtocolVersion(convert(version))
-        .setKeyName(keyName)
-        .build();
+    HdfsProtos.ZoneEncryptionInfoProto.Builder builder =
+        HdfsProtos.ZoneEncryptionInfoProto.newBuilder().setSuite(convert(suite))
+            .setCryptoProtocolVersion(convert(version)).setKeyName(keyName);
+    if (proto != null) {
+      builder.setReencryptionProto(proto);
+    }
+    return builder.build();
   }
 
   public static FileEncryptionInfo convert(
@@ -2701,6 +2734,39 @@ public class PBHelperClient {
     String ezKeyVersionName = fileProto.getEzKeyVersionName();
     return new FileEncryptionInfo(suite, version, key, iv, keyName,
         ezKeyVersionName);
+  }
+
+  public static HdfsProtos.ReencryptionInfoProto convert(
+      String ezKeyVersionName, Long submissionTime, boolean isCanceled,
+      Long completionTime, String lastFile) {
+    if (ezKeyVersionName == null || submissionTime == null) {
+      return null;
+    }
+    HdfsProtos.ReencryptionInfoProto.Builder builder =
+        HdfsProtos.ReencryptionInfoProto.newBuilder()
+            .setEzKeyVersionName(ezKeyVersionName)
+            .setSubmissionTime(submissionTime).setCanceled(isCanceled);
+    if (completionTime != null) {
+      builder.setCompletionTime(completionTime);
+    }
+    if (lastFile != null) {
+      builder.setLastFile(lastFile);
+    }
+    return builder.build();
+  }
+
+  public static ReencryptionInfo convert(
+      HdfsProtos.ReencryptionInfoProto proto) {
+    if (proto == null) {
+      return null;
+    }
+    final String ezkvn = proto.getEzKeyVersionName();
+    final long submissionTime = proto.getSubmissionTime();
+    final boolean canceled = proto.getCanceled();
+    final long completionTime = proto.getCompletionTime();
+    final String lastFile = proto.getLastFile();
+    return new ReencryptionInfo(ezkvn, submissionTime, canceled, completionTime,
+        lastFile);
   }
 
   public static DatanodeInfo[] convert(DatanodeInfosProto datanodeInfosProto) {

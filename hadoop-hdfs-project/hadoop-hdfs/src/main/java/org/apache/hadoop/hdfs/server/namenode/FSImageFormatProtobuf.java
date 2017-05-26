@@ -40,6 +40,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 
+import com.google.common.base.Preconditions;
 import org.apache.hadoop.io.compress.CompressionOutputStream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -365,7 +366,6 @@ public final class FSImageFormatProtobuf {
       fsn.getCacheManager().loadState(
           new CacheManager.PersistState(s, pools, directives));
     }
-
   }
 
   public static final class Saver {

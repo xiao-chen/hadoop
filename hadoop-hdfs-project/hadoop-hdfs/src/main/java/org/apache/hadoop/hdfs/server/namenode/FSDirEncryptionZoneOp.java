@@ -27,6 +27,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.NavigableMap;
 
 import org.apache.hadoop.crypto.CipherSuite;
 import org.apache.hadoop.crypto.CryptoProtocolVersion;
@@ -44,13 +45,19 @@ import org.apache.hadoop.hdfs.XAttrHelper;
 import org.apache.hadoop.hdfs.protocol.EncryptionZone;
 import org.apache.hadoop.hdfs.protocol.SnapshotAccessControlException;
 import org.apache.hadoop.hdfs.protocol.proto.HdfsProtos;
+import org.apache.hadoop.hdfs.protocol.proto.HdfsProtos.ReencryptionInfoProto;
+import org.apache.hadoop.hdfs.protocol.proto.HdfsProtos.ZoneEncryptionInfoProto;
 import org.apache.hadoop.hdfs.protocolPB.PBHelperClient;
 import org.apache.hadoop.hdfs.server.namenode.FSDirectory.DirOp;
+import org.apache.hadoop.hdfs.server.namenode.ReencryptionFinalizer.FileEdekPair;
 import org.apache.hadoop.security.SecurityUtil;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 import com.google.protobuf.InvalidProtocolBufferException;
+import org.apache.hadoop.util.Time;
+
+import static org.apache.hadoop.hdfs.server.common.HdfsServerConstants.CRYPTO_XATTR_ENCRYPTION_ZONE;
 import static org.apache.hadoop.util.Time.monotonicNow;
 
 /**
@@ -216,18 +223,169 @@ final class FSDirEncryptionZoneOp {
     }
   }
 
+  static void reencryptEncryptionZone(final FSDirectory fsd,
+      final INodesInPath zoneIIP, final String keyVersionName,
+      final boolean logRetryCache) throws IOException {
+    List<XAttr> xAttrs = Lists.newArrayListWithCapacity(1);
+    fsd.writeLock();
+    try {
+      final XAttr xattr = fsd.ezManager
+          .reencryptEncryptionZone(zoneIIP, keyVersionName, logRetryCache);
+      xAttrs.add(xattr);
+    } finally {
+      fsd.writeUnlock();
+    }
+    fsd.getEditLog().logSetXAttrs(zoneIIP.getPath(), xAttrs, logRetryCache);
+  }
+
+  static void cancelReencryptEncryptionZone(final FSDirectory fsd,
+      final INodesInPath zoneIIP, final boolean logRetryCache)
+      throws IOException {
+    List<XAttr> xattrs;
+    fsd.writeLock();
+    try {
+      xattrs =
+          fsd.ezManager.cancelReencryptEncryptionZone(zoneIIP);
+    } finally {
+      fsd.writeUnlock();
+    }
+    if (xattrs != null && !xattrs.isEmpty()) {
+      fsd.getEditLog().logSetXAttrs(zoneIIP.getPath(), xattrs, logRetryCache);
+    }
+  }
+
+  /**
+   * Update re-encryption progress (start, checkpoint). Caller should
+   * logSync after calling this, outside of the FSN lock.
+   */
+  static XAttr updateReencryptionProgress(final FSDirectory fsd,
+      final INodesInPath iip,
+      final NavigableMap<String, FileEdekPair> batch) throws IOException {
+    final ZoneEncryptionInfoProto zoneProto = getZoneEncryptionInfoProto(iip);
+    Preconditions.checkNotNull(zoneProto, "ZoneEncryptionInfoProto is null.");
+    final ReencryptionInfoProto proto = zoneProto.getReencryptionProto();
+    Preconditions.checkNotNull(proto, "ReencryptionInfoProto is null.");
+
+    Preconditions
+        .checkArgument(batch != null && !batch.isEmpty(), "No files in batch.");
+    final String lastFile = batch.lastKey();
+
+    final ReencryptionInfoProto newProto = PBHelperClient
+        .convert(proto.getEzKeyVersionName(), proto.getSubmissionTime(), false,
+            null, lastFile);
+
+    final ZoneEncryptionInfoProto newZoneProto = PBHelperClient
+        .convert(PBHelperClient.convert(zoneProto.getSuite()),
+            PBHelperClient.convert(zoneProto.getCryptoProtocolVersion()),
+            zoneProto.getKeyName(), newProto);
+
+    final XAttr xattr = XAttrHelper
+        .buildXAttr(CRYPTO_XATTR_ENCRYPTION_ZONE, newZoneProto.toByteArray());
+    final List<XAttr> xattrs = Lists.newArrayListWithCapacity(1);
+    xattrs.add(xattr);
+    FSDirXAttrOp.unprotectedSetXAttrs(fsd, iip, xattrs,
+        EnumSet.of(XAttrSetFlag.REPLACE));
+    return xattr;
+  }
+
+  /**
+   * Update re-encryption progress (start). Caller should
+   * logSync after calling this, outside of the FSN lock.
+   */
+  static XAttr updateReencryptionStart(final FSDirectory fsd,
+      final INodesInPath iip, final String ezKeyVersionName) throws IOException {
+    Preconditions.checkNotNull(ezKeyVersionName, "ezKeyVersionName is null.");
+    final ZoneEncryptionInfoProto zoneProto = getZoneEncryptionInfoProto(iip);
+    Preconditions.checkNotNull(zoneProto, "ZoneEncryptionInfoProto is null.");
+    
+    final ReencryptionInfoProto newProto = PBHelperClient
+        .convert(ezKeyVersionName, Time.now(), false, null, null);
+    final ZoneEncryptionInfoProto newZoneProto = PBHelperClient
+        .convert(PBHelperClient.convert(zoneProto.getSuite()),
+            PBHelperClient.convert(zoneProto.getCryptoProtocolVersion()),
+            zoneProto.getKeyName(), newProto);
+
+    final XAttr xattr = XAttrHelper
+        .buildXAttr(CRYPTO_XATTR_ENCRYPTION_ZONE, newZoneProto.toByteArray());
+    final List<XAttr> xattrs = Lists.newArrayListWithCapacity(1);
+    xattrs.add(xattr);
+    FSDirXAttrOp.unprotectedSetXAttrs(fsd, iip, xattrs,
+        EnumSet.of(XAttrSetFlag.REPLACE));
+    return xattr;
+  }
+
+  /**
+   * Log re-encrypt complete (cancel, or 100% re-encrypt) to edits.
+   * Caller should logSync after calling this, outside of the FSN lock.
+   */
+  static List<XAttr> updateReencryptionFinish(final FSDirectory fsd,
+      final INodesInPath zoneIIP, final boolean isCanceled) throws IOException {
+    final XAttr xattr = generateNewXAttrAfterReencryption(fsd, zoneIIP, isCanceled);
+    final List<XAttr> xattrs = Lists.newArrayListWithCapacity(1);
+    xattrs.add(xattr);
+    FSDirXAttrOp.unprotectedSetXAttrs(fsd, zoneIIP, xattrs,
+        EnumSet.of(XAttrSetFlag.REPLACE));
+    return xattrs;
+  }
+  
+  static XAttr generateNewXAttrAfterReencryption(final FSDirectory fsd,
+      final INodesInPath iip, boolean isCancelled) throws IOException {
+    final ZoneEncryptionInfoProto zoneProto = getZoneEncryptionInfoProto(iip);
+    HdfsProtos.ReencryptionInfoProto riProto = zoneProto.getReencryptionProto();
+    final HdfsProtos.ReencryptionInfoProto newRiProto = PBHelperClient
+        .convert(riProto.getEzKeyVersionName(), riProto.getSubmissionTime(),
+            isCancelled, Time.now(), null);
+
+    final ZoneEncryptionInfoProto newZoneProto = PBHelperClient
+        .convert(PBHelperClient.convert(zoneProto.getSuite()),
+            PBHelperClient.convert(zoneProto.getCryptoProtocolVersion()),
+            zoneProto.getKeyName(), newRiProto);
+
+    final XAttr xattr = XAttrHelper
+        .buildXAttr(CRYPTO_XATTR_ENCRYPTION_ZONE, newZoneProto.toByteArray());
+    return xattr;
+  }
+
+  private static ZoneEncryptionInfoProto getZoneEncryptionInfoProto(
+      final INodesInPath iip) throws IOException {
+    final XAttr fileXAttr = FSDirXAttrOp
+        .unprotectedGetXAttrByPrefixedName(iip, CRYPTO_XATTR_ENCRYPTION_ZONE);
+    if (fileXAttr == null) {
+      throw new IOException(
+          "Could not find reencryption XAttr for file " + iip.getPath());
+    }
+    try {
+      return ZoneEncryptionInfoProto.parseFrom(fileXAttr.getValue());
+    } catch (InvalidProtocolBufferException e) {
+      throw new IOException(
+          "Could not parse file encryption info for " + "inode " + iip
+              .getPath(), e);
+    }
+  }
+
+  static void saveFileXAttrsForBatch(FSDirectory fsd,
+      NavigableMap<String, FileEdekPair> batch, boolean logRetryCache) {
+    if (batch != null && !batch.isEmpty()) {
+      // first log the batch's xattr changes
+      for (Map.Entry<String, FileEdekPair> entry : batch.entrySet()) {
+        fsd.getEditLog().logSetXAttrs(entry.getKey(),
+            entry.getValue().getInodeFile().getXAttrFeature().getXAttrs(),
+            logRetryCache);
+      }
+    }
+  }
+
   /**
    * Set the FileEncryptionInfo for an INode.
    *
    * @param fsd fsdirectory
-   * @param src the path of a directory which will be the root of the
-   *            encryption zone.
    * @param info file encryption information
+   * @param flag action when setting xattr. Either CREATE or REPLACE.
    * @throws IOException
    */
   static void setFileEncryptionInfo(final FSDirectory fsd,
-      final INodesInPath iip, final FileEncryptionInfo info)
-          throws IOException {
+      final INodesInPath iip, final FileEncryptionInfo info,
+      final XAttrSetFlag flag) throws IOException {
     // Make the PB for the xattr
     final HdfsProtos.PerFileEncryptionInfoProto proto =
         PBHelperClient.convertPerFileEncInfo(info);
@@ -239,7 +397,7 @@ final class FSDirEncryptionZoneOp {
     fsd.writeLock();
     try {
       FSDirXAttrOp.unprotectedSetXAttrs(fsd, iip, xAttrs,
-                                        EnumSet.of(XAttrSetFlag.CREATE));
+          EnumSet.of(flag));
     } finally {
       fsd.writeUnlock();
     }

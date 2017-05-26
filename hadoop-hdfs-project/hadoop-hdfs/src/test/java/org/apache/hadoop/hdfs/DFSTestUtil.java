@@ -107,6 +107,8 @@ import org.apache.hadoop.fs.permission.AclEntryType;
 import org.apache.hadoop.fs.permission.FsAction;
 import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.hdfs.MiniDFSCluster.NameNodeInfo;
+import org.apache.hadoop.hdfs.client.CreateEncryptionZoneFlag;
+import org.apache.hadoop.hdfs.client.HdfsAdmin;
 import org.apache.hadoop.hdfs.client.HdfsClientConfigKeys;
 import org.apache.hadoop.hdfs.client.HdfsDataInputStream;
 import org.apache.hadoop.hdfs.protocol.Block;
@@ -123,6 +125,7 @@ import org.apache.hadoop.hdfs.protocol.SystemErasureCodingPolicies;
 import org.apache.hadoop.hdfs.protocol.ErasureCodingPolicy;
 import org.apache.hadoop.hdfs.protocol.ExtendedBlock;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants;
+import org.apache.hadoop.hdfs.protocol.HdfsConstants.ReencryptAction;
 import org.apache.hadoop.hdfs.protocol.LayoutVersion;
 import org.apache.hadoop.hdfs.protocol.LocatedBlock;
 import org.apache.hadoop.hdfs.protocol.LocatedBlocks;
@@ -199,7 +202,10 @@ public class DFSTestUtil {
   private final int minSize;
   private final int nFiles;
   private MyFile[] files;
-  
+
+  public static final String TEST_KEY = "test_key";
+  public static final int NUM_OPERATIONS_RUN = 29;
+
   /** Creates a new instance of DFSTestUtil
    *
    * @param nFiles Number of files to be created
@@ -1464,6 +1470,17 @@ public class DFSTestUtil {
         new byte[]{0x37, 0x38, 0x39});
     // OP_REMOVE_XATTR
     filesystem.removeXAttr(pathConcatTarget, "user.a2");
+
+    // OP_REENCRYPT_ZONE 49 and OP_REENCRYPT_ZONE_COMPLETE 50
+    HdfsAdmin admin = new HdfsAdmin(cluster.getURI(nnIndex), conf);
+    admin.createEncryptionZone(pathDirectoryMkdir, TEST_KEY,
+        EnumSet.of(CreateEncryptionZoneFlag.NO_TRASH));
+    // Pause re-encrypt so that the cancel command can successfully cancel
+    // the in-progress re-encryption
+    cluster.getNamesystem(nnIndex).getFSDirectory().ezManager
+        .pauseReencryptForTesting();
+    admin.reencryptEncryptionZone(pathDirectoryMkdir, ReencryptAction.START);
+    admin.reencryptEncryptionZone(pathDirectoryMkdir, ReencryptAction.CANCEL);
   }
 
   public static void abortStream(DFSOutputStream out) throws IOException {

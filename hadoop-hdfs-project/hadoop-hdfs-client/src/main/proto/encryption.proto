@@ -58,6 +58,19 @@ message ListEncryptionZonesResponseProto {
   required bool hasMore = 2;
 }
 
+enum ReencryptActionProto {
+  CANCEL_REENCRYPT = 1;
+  START_REENCRYPT = 2;
+}
+
+message ReencryptEncryptionZoneRequestProto {
+  required ReencryptActionProto action = 1;
+  required string zone = 2;
+}
+
+message ReencryptEncryptionZoneResponseProto {
+}
+
 message GetEZForPathRequestProto {
     required string src = 1;
 }

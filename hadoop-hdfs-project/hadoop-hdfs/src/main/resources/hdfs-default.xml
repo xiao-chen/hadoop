@@ -2827,6 +2827,31 @@
 </property>
 
 <property>
+  <name>dfs.namenode.reencrypt.interval</name>
+  <value>1m</value>
+  <description>Interval the re-encrypt EDEK thread sleeps in the main loop. The
+    interval accepts units. If none given, millisecond is assumed.
+  </description>
+</property>
+
+<property>
+  <name>dfs.namenode.reencrypt.batch.size</name>
+  <value>500</value>
+  <description>How many EDEKs should the re-encrypt thread process in one batch.
+  </description>
+</property>
+
+<property>
+  <name>dfs.namenode.reencrypt.throttle.limit.ratio</name>
+  <value>1.0</value>
+  <description>Throttling ratio for the re-encryption, indicating what fraction
+    of time should the re-encrypt thread work under NN lock. Larger than 1.0
+    values are interpreted as 1.0. Negative value or 0 disables the
+    re-encryption feature.
+  </description>
+</property>
+
+<property>
   <name>dfs.namenode.inotify.max.events.per.rpc</name>
   <value>1000</value>
   <description>Maximum number of events that will be sent to an inotify client

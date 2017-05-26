@@ -19,25 +19,34 @@ package org.apache.hadoop.hdfs.server.namenode;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
 import java.util.TreeMap;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.crypto.CipherSuite;
 import org.apache.hadoop.crypto.CryptoProtocolVersion;
+import org.apache.hadoop.crypto.key.KeyProviderCryptoExtension;
 import org.apache.hadoop.fs.UnresolvedLinkException;
 import org.apache.hadoop.fs.XAttr;
 import org.apache.hadoop.fs.XAttrSetFlag;
 import org.apache.hadoop.hdfs.DFSConfigKeys;
 import org.apache.hadoop.hdfs.XAttrHelper;
 import org.apache.hadoop.hdfs.protocol.EncryptionZone;
+import org.apache.hadoop.hdfs.protocol.ReencryptionStatus;
+import org.apache.hadoop.hdfs.protocol.ReencryptionStatus.ZoneStatus;
 import org.apache.hadoop.hdfs.protocol.SnapshotAccessControlException;
 import org.apache.hadoop.hdfs.protocol.proto.HdfsProtos;
+import org.apache.hadoop.hdfs.protocol.proto.HdfsProtos.ReencryptionInfoProto;
 import org.apache.hadoop.hdfs.protocolPB.PBHelperClient;
 import org.apache.hadoop.hdfs.server.namenode.FSDirectory.DirOp;
 import org.slf4j.Logger;
@@ -100,6 +109,55 @@ public class EncryptionZoneManager {
   private final FSDirectory dir;
   private final int maxListEncryptionZonesResponses;
 
+  private final ThreadFactory reencryptionThreadFactory;
+  private ExecutorService reencryptHandlerExecutor;
+  private ReencryptionHandler reencryptionHandler;
+
+  @VisibleForTesting
+  public void pauseReencryptForTesting() {
+    reencryptionHandler.pauseForTesting();
+  }
+
+  @VisibleForTesting
+  public void resumeReencryptForTesting() {
+    reencryptionHandler.resumeForTesting();
+  }
+
+  @VisibleForTesting
+  public void pauseForTestingAfterNthCheckpoint(final int count) {
+    reencryptionHandler.pauseForTestingAfterNthBatch(count);
+  }
+
+  @VisibleForTesting
+  public void resetMetrics() {
+    reencryptionHandler.getReencryptionStatus().resetMetrics();
+  }
+
+  @VisibleForTesting
+  public ReencryptionStatus getReencryptionStatus() {
+    return reencryptionHandler.getReencryptionStatus();
+  }
+
+  @VisibleForTesting
+  public ZoneStatus getZoneStatus(final String zone) throws IOException {
+    final FSPermissionChecker pc = dir.getPermissionChecker();
+    final INode inode;
+    dir.getFSNamesystem().readLock();
+    try {
+      final INodesInPath iip = dir.resolvePath(pc, zone, DirOp.READ);
+      inode = iip.getLastINode();
+    } finally {
+      dir.getFSNamesystem().readUnlock();
+    }
+    if (inode == null) {
+      return null;
+    }
+    return getReencryptionStatus().getZoneStatus(inode.getId());
+  }
+
+  FSDirectory getDir() {
+    return dir;
+  }
   /**
    * Construct a new EncryptionZoneManager.
    *
@@ -115,6 +173,29 @@ public class EncryptionZoneManager {
         DFSConfigKeys.DFS_NAMENODE_LIST_ENCRYPTION_ZONES_NUM_RESPONSES + " " +
             "must be a positive integer."
     );
+    reencryptionHandler = new ReencryptionHandler(this, conf);
+    reencryptionThreadFactory = new ThreadFactoryBuilder().setDaemon(true)
+        .setNameFormat("Re-encrypt EDEK Thread #%d")
+        .build();
+  }
+
+  KeyProviderCryptoExtension getProvider() {
+    return dir.getProvider();
+  }
+
+  void startReencryptThread() {
+    reencryptHandlerExecutor =
+        Executors.newSingleThreadExecutor(reencryptionThreadFactory);
+    reencryptHandlerExecutor.execute(reencryptionHandler);
+    reencryptionHandler.startThreads();
+  }
+
+  void stopReencryptThread() {
+    reencryptionHandler.stopThreads();
+    if (reencryptHandlerExecutor != null) {
+      reencryptHandlerExecutor.shutdownNow();
+      reencryptHandlerExecutor = null;
+    }
   }
 
   /**
@@ -154,11 +235,22 @@ public class EncryptionZoneManager {
    * <p/>
    * Called while holding the FSDirectory lock.
    */
-  void removeEncryptionZone(Long inodeId) {
+  void removeEncryptionZone(final INode inode) {
     assert dir.hasWriteLock();
-    if (hasCreatedEncryptionZone()) {
-      encryptionZones.remove(inodeId);
+    if (!inode.isDirectory()) {
+      return;
     }
+    if (!hasCreatedEncryptionZone()) {
+      return;
+    }
+    if (encryptionZones.remove(inode.getId()) == null
+        || !getReencryptionStatus().hasZone(inode.getId())) {
+      return;
+    }
+    final boolean result = getReencryptionStatus().removeZone(inode.getId());
+    LOG.info("{} from re-encrypt queue {} when removing the zone {}.",
+        result ? "Also removed" : "Did not remove", getReencryptionStatus(),
+        inode.getFullPathName());
   }
 
   /**
@@ -173,13 +265,13 @@ public class EncryptionZoneManager {
   }
 
   /**
-   * Returns the path of the EncryptionZoneInt.
+   * Returns the full path from an INode id.
    * <p/>
    * Called while holding the FSDirectory lock.
    */
-  private String getFullPathName(EncryptionZoneInt ezi) {
+  String getFullPathName(Long nodeId) {
     assert dir.hasReadLock();
-    return dir.getInode(ezi.getINodeId()).getFullPathName();
+    return dir.getInode(nodeId).getFullPathName();
   }
 
   /**
@@ -248,7 +340,8 @@ public class EncryptionZoneManager {
     if (ezi == null) {
       return null;
     } else {
-      return new EncryptionZone(ezi.getINodeId(), getFullPathName(ezi),
+      return new EncryptionZone(ezi.getINodeId(),
+          getFullPathName(ezi.getINodeId()),
           ezi.getSuite(), ezi.getVersion(), ezi.getKeyName());
     }
   }
@@ -285,8 +378,8 @@ public class EncryptionZoneManager {
 
     if (srcInEZ) {
       if (srcParentEZI != dstParentEZI) {
-        final String srcEZPath = getFullPathName(srcParentEZI);
-        final String dstEZPath = getFullPathName(dstParentEZI);
+        final String srcEZPath = getFullPathName(srcParentEZI.getINodeId());
+        final String dstEZPath = getFullPathName(dstParentEZI.getINodeId());
         final StringBuilder sb = new StringBuilder(srcIIP.getPath());
         sb.append(" can't be moved from encryption zone ");
         sb.append(srcEZPath);
@@ -370,7 +463,7 @@ public class EncryptionZoneManager {
        the INode's parents at the time it was snapshotted. It will not 
        contain a reference INode.
       */
-      final String pathName = getFullPathName(ezi);
+      final String pathName = getFullPathName(ezi.getINodeId());
       INode inode = dir.getInode(ezi.getINodeId());
       INode lastINode = null;
       if (inode.getParent() != null || inode.isRoot()) {
@@ -390,6 +483,127 @@ public class EncryptionZoneManager {
     }
     final boolean hasMore = (numResponses < tailMap.size());
     return new BatchedListEntries<EncryptionZone>(zones, hasMore);
+  }
+
+  /**
+   * Re-encrypts the given encryption zone path. If the given path is not the
+   * root of an encryption zone, an exception is thrown.
+   */
+  XAttr reencryptEncryptionZone(final INodesInPath zoneIIP,
+      final String keyVersionName, final boolean logRetryCache)
+      throws IOException {
+    assert dir.hasWriteLock();
+    if (!reencryptionHandler.isEnabled()) {
+      throw new IOException("Re-encryption is disabled. Cannot re-encrypt.");
+    }
+    final INode inode = zoneIIP.getLastINode();
+    checkEncryptionZoneRoot(inode);
+    if (getReencryptionStatus().hasZone(inode.getId())) {
+      LOG.debug("Rejected re-encrypt command for zone {}. Current queue:{}",
+          zoneIIP.getPath(), getReencryptionStatus());
+      throw new IOException("Zone " + zoneIIP.getPath()
+          + " is already submitted for re-encryption.");
+    }
+    LOG.info("Zone {} is submitted for re-encryption.", zoneIIP.getPath());
+    return FSDirEncryptionZoneOp
+        .updateReencryptionStart(dir, zoneIIP, keyVersionName);
+  }
+
+  /**
+   * Cancels the currently-running re-encryption of the given encryption zone.
+   * If the given path If the given path is not the root of an encryption zone,
+   * an exception is thrown.
+   */
+  List<XAttr> cancelReencryptEncryptionZone(final INodesInPath zoneIIP)
+      throws IOException {
+    assert dir.hasWriteLock();
+    if (!reencryptionHandler.isEnabled()) {
+      throw new IOException("Re-encryption is disabled. Cannot cancel.");
+    }
+    final INode inode = zoneIIP.getLastINode();
+    checkEncryptionZoneRoot(inode);
+    if (!getReencryptionStatus().hasZone(inode.getId())) {
+      LOG.debug("Rejected re-encrypt cancellation command for zone {}. Current "
+          + "queue:{}", zoneIIP.getPath(), getReencryptionStatus());
+      throw new IOException("Zone " + zoneIIP.getPath()
+          + " is not under re-encryption");
+    }
+    if (getReencryptionStatus().hasZone(inode.getId())) {
+      reencryptionHandler.cancelCurrentZone();
+    }
+    LOG.info("Cancelled zone {} for re-encryption.", zoneIIP.getPath());
+//    getReencryptionStatus().removeZone(inode.getId());
+    return FSDirEncryptionZoneOp.updateReencryptionFinish(dir, zoneIIP, true);
+  }
+
+  /**
+   * Load status about the re-encryption.
+   *
+   * @param zoneId    inode id of the encryption zone.
+   * @param reProto   the ReencryptionInfoProto.
+   */
+  public void setReencryptionStatus(final Long zoneId,
+      final ReencryptionInfoProto reProto) {
+    Preconditions.checkArgument(zoneId != null, "zoneId can't be null");
+    if (reProto == null) {
+      return;
+    }
+
+    boolean ret = getReencryptionStatus().addZoneIfNecessary(zoneId);
+    if (reProto.hasCompletionTime()) {
+      LOG.info("Setting re-encrypt status on zone:{} to completed.", zoneId);
+      getReencryptionStatus().markZoneCompleted(zoneId);
+      return;
+    }
+
+    String lastFile = null;
+    if (reProto.hasLastFile()) {
+      lastFile = reProto.getLastFile();
+      if (lastFile != null && !lastFile.isEmpty()) {
+        LOG.info("Updating re-encrypt status on zone:{}, KeyVersionName: {}, "
+                + "new cmd:{}, lastFile:{}", zoneId,
+            reProto.getEzKeyVersionName(), ret, lastFile);
+        ZoneStatus zs = getReencryptionStatus().getZoneStatus(zoneId);
+        Preconditions.checkNotNull(zs);
+        zs.setLastProcessedFile(lastFile);
+      }
+    } else {
+      LOG.info("Resetting re-encrypt status on zone:{}, KeyVersionName: {}, "
+          + "new cmd:{}.", zoneId, reProto.getEzKeyVersionName(), ret);
+      ZoneStatus zs = getReencryptionStatus().getZoneStatus(zoneId);
+      Preconditions.checkNotNull(zs);
+      zs.reset();
+    }
+  }
+
+  /**
+   * Return whether an INode is an encryption zone root.
+   */
+  boolean isEncryptionZoneRoot(final INode inode) {
+    Preconditions.checkNotNull(inode);
+    assert dir.hasReadLock();
+    if (!inode.isDirectory()) {
+      return false;
+    }
+    if (!hasCreatedEncryptionZone()
+        || !encryptionZones.containsKey(inode.getId())) {
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Return whether an INode is an encryption zone root.
+   *
+   * @param inode the zone inode
+   * @throws IOException if the inode is not a directory,
+   *                     or is a directory but not the root of an EZ.
+   */
+  void checkEncryptionZoneRoot(final INode inode) throws IOException {
+    if (!isEncryptionZoneRoot(inode)) {
+      throw new IOException("Path " + inode.getFullPathName() + " is not "
+          + "the root of an encryption zone.");
+    }
   }
 
   /**

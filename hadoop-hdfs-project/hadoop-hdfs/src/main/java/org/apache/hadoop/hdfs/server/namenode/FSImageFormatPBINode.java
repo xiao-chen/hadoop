@@ -411,7 +411,7 @@ public final class FSImageFormatPBINode {
       return sym;
     }
 
-    private void loadRootINode(INodeSection.INode p) {
+    private void loadRootINode(INodeSection.INode p) throws IOException {
       INodeDirectory root = loadINodeDirectory(p, parent.getLoaderContext());
       final QuotaCounts q = root.getQuotaCounts();
       final long nsQuota = q.getNameSpace();

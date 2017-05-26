@@ -384,6 +384,15 @@ public class INodesInPath {
     return inodes.length;
   }
 
+  boolean contains(long id) {
+    for (int i = 0; i < inodes.length; ++i) {
+      if (inodes[i].getId() == id) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   public List<INode> getReadOnlyINodes() {
     return Collections.unmodifiableList(Arrays.asList(inodes));
   }

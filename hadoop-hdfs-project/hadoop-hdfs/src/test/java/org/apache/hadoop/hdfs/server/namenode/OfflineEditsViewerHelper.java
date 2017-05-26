@@ -20,6 +20,7 @@ package org.apache.hadoop.hdfs.server.namenode;
 
 import java.io.File;
 import java.io.IOException;
+import java.security.NoSuchAlgorithmException;
 import java.util.Iterator;
 
 import org.apache.commons.logging.Log;
@@ -27,7 +28,10 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.crypto.key.JavaKeyStoreProvider;
 import org.apache.hadoop.fs.CommonConfigurationKeysPublic;
+import org.apache.hadoop.fs.FileSystemTestHelper;
+import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hdfs.DFSConfigKeys;
 import org.apache.hadoop.hdfs.DFSTestUtil;
 import org.apache.hadoop.hdfs.DistributedFileSystem;
@@ -98,9 +102,21 @@ public class OfflineEditsViewerHelper {
     config.setBoolean(
         DFSConfigKeys.DFS_NAMENODE_DELEGATION_TOKEN_ALWAYS_USE_KEY, true);
     config.setBoolean(DFSConfigKeys.DFS_NAMENODE_ACLS_ENABLED_KEY, true);
+
+    // setup key provider to test hdfs encryption.
+    String testRoot = new FileSystemTestHelper().getTestRootDir();
+    File testRootDir = new File(testRoot).getAbsoluteFile();
+    config.set(CommonConfigurationKeysPublic.HADOOP_SECURITY_KEY_PROVIDER_PATH,
+        JavaKeyStoreProvider.SCHEME_NAME + "://file" + new Path(
+            testRootDir.toString(), "test.jks").toUri());
     cluster =
       new MiniDFSCluster.Builder(config).manageNameDfsDirs(false).build();
     cluster.waitClusterUp();
+    try {
+      DFSTestUtil.createKey(DFSTestUtil.TEST_KEY, cluster, config);
+    } catch (NoSuchAlgorithmException e) {
+      throw new IOException(e);
+    }
   }
 
   /**

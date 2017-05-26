@@ -885,6 +885,12 @@ public class DFSConfigKeys extends CommonConfigurationKeys {
   public static final int DFS_NAMENODE_EDEKCACHELOADER_INTERVAL_MS_DEFAULT = 1000;
   public static final String DFS_NAMENODE_EDEKCACHELOADER_INITIAL_DELAY_MS_KEY = "dfs.namenode.edekcacheloader.initial.delay.ms";
   public static final int DFS_NAMENODE_EDEKCACHELOADER_INITIAL_DELAY_MS_DEFAULT = 3000;
+  public static final String DFS_NAMENODE_REENCRYPT_INTERVAL_KEY = "dfs.namenode.reencrypt.interval";
+  public static final String DFS_NAMENODE_REENCRYPT_INTERVAL_DEFAULT = "1m";
+  public static final String DFS_NAMENODE_REENCRYPT_BATCH_SIZE_KEY = "dfs.namenode.reencrypt.batch.size";
+  public static final int DFS_NAMENODE_REENCRYPT_BATCH_SIZE_DEFAULT = 500;
+  public static final String DFS_NAMENODE_REENCRYPT_THROTTLE_LIMIT_RATIO_KEY = "dfs.namenode.reencrypt.throttle.limit.ratio";
+  public static final double DFS_NAMENODE_REENCRYPT_THROTTLE_LIMIT_RATIO_DEFAULT = 1.0;
 
   // Journal-node related configs. These are read on the JN side.
   public static final String  DFS_JOURNALNODE_EDITS_DIR_KEY = "dfs.journalnode.edits.dir";

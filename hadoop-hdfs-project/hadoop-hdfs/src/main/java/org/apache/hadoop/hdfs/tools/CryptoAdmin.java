@@ -22,6 +22,7 @@ import java.util.EnumSet;
 import java.util.LinkedList;
 import java.util.List;
 
+import com.google.common.base.Preconditions;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
@@ -32,6 +33,7 @@ import org.apache.hadoop.fs.RemoteIterator;
 import org.apache.hadoop.hdfs.client.CreateEncryptionZoneFlag;
 import org.apache.hadoop.hdfs.client.HdfsAdmin;
 import org.apache.hadoop.hdfs.protocol.EncryptionZone;
+import org.apache.hadoop.hdfs.protocol.HdfsConstants;
 import org.apache.hadoop.tools.TableListing;
 import org.apache.hadoop.util.StringUtils;
 import org.apache.hadoop.util.Tool;
@@ -286,10 +288,79 @@ public class CryptoAdmin extends Configured implements Tool {
     }
   }
 
+  private static class ReencryptZoneCommand implements AdminHelper.Command {
+    @Override
+    public String getName() {
+      return "-reencryptZone";
+    }
+
+    @Override
+    public String getShortUsage() {
+      return "[" + getName() + " <action> -path <zone>]\n";
+    }
+
+    @Override
+    public String getLongUsage() {
+      final TableListing listing = AdminHelper.getOptionDescriptionListing();
+      listing.addRow("<action>",
+          "The re-encrypt action to perform. Must be " + "-start or -cancel.");
+      listing.addRow("<zone>", "The path to the zone to be re-encrypted.");
+      return getShortUsage() + "\n" + "Issue a re-encrypt command for"
+          + " an encryption zone. Requires superuser permissions.\n\n" + listing
+          .toString();
+    }
+
+    @Override
+    public int run(Configuration conf, List<String> args) throws IOException {
+      final String path = StringUtils.popOptionWithArgument("-path", args);
+      final boolean start = StringUtils.popOption("-start", args);
+      final boolean cancel = StringUtils.popOption("-cancel", args);
+
+      if (!args.isEmpty()) {
+        System.err.println("Can't understand argument: " + args.get(0));
+        return 1;
+      }
+      if (path == null) {
+        System.err.println("You must specify a zone with -path. "
+            + "Please check command help for more information.");
+        return 2;
+      }
+      HdfsConstants.ReencryptAction action = null;
+      if (start) {
+        action = HdfsConstants.ReencryptAction.START;
+      }
+      if (cancel) {
+        if (action == null) {
+          action = HdfsConstants.ReencryptAction.CANCEL;
+        }
+      }
+      if (action == null) {
+        System.err.println("You must specify a zone with either -start or"
+            + " -cancel. Please check command help for more information.");
+        return 3;
+      }
+
+      final HdfsAdmin admin =
+          new HdfsAdmin(FileSystem.getDefaultUri(conf), conf);
+      try {
+        Preconditions.checkNotNull(path);
+        admin.reencryptEncryptionZone(new Path(path), action);
+        System.out.println(
+            "re-encrypt command successfully submitted for" + " zone: " + path
+                + " action: " + action);
+      } catch (IOException e) {
+        System.err.println(prettifyException(e));
+        return 4;
+      }
+      return 0;
+    }
+  }
+
   private static final AdminHelper.Command[] COMMANDS = {
       new CreateZoneCommand(),
       new ListZonesCommand(),
       new ProvisionTrashCommand(),
-      new GetFileEncryptionInfoCommand()
+      new GetFileEncryptionInfoCommand(),
+      new ReencryptZoneCommand(),
   };
 }

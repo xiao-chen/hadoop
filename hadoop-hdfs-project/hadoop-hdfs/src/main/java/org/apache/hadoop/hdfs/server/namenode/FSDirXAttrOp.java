@@ -29,6 +29,7 @@ import org.apache.hadoop.hdfs.DFSConfigKeys;
 import org.apache.hadoop.hdfs.DFSUtil;
 import org.apache.hadoop.hdfs.XAttrHelper;
 import org.apache.hadoop.hdfs.protocol.proto.HdfsProtos;
+import org.apache.hadoop.hdfs.protocol.proto.HdfsProtos.ReencryptionInfoProto;
 import org.apache.hadoop.hdfs.protocolPB.PBHelperClient;
 import org.apache.hadoop.hdfs.server.namenode.FSDirectory.DirOp;
 import org.apache.hadoop.security.AccessControlException;
@@ -195,6 +196,13 @@ class FSDirXAttrOp {
                                               removedXAttrs);
     if (existingXAttrs.size() != newXAttrs.size()) {
       XAttrStorage.updateINodeXAttrs(inode, newXAttrs, snapshotId);
+      for (XAttr xattr : removedXAttrs) {
+        final String xaName = XAttrHelper.getPrefixedName(xattr);
+        if (CRYPTO_XATTR_ENCRYPTION_ZONE.equals(xaName)) {
+          // TODO
+          fsd.ezManager.getReencryptionStatus().removeZone(inode.getId());
+        }
+      }
       return removedXAttrs;
     }
     return null;
@@ -275,8 +283,12 @@ class FSDirXAttrOp {
             PBHelperClient.convert(ezProto.getSuite()),
             PBHelperClient.convert(ezProto.getCryptoProtocolVersion()),
             ezProto.getKeyName());
-      }
 
+        if (ezProto.hasReencryptionProto()) {
+          ReencryptionInfoProto reProto = ezProto.getReencryptionProto();
+          fsd.ezManager.setReencryptionStatus(inode.getId(), reProto);
+        }
+      }
       if (!isFile && SECURITY_XATTR_UNREADABLE_BY_SUPERUSER.equals(xaName)) {
         throw new IOException("Can only set '" +
             SECURITY_XATTR_UNREADABLE_BY_SUPERUSER + "' on a file.");
