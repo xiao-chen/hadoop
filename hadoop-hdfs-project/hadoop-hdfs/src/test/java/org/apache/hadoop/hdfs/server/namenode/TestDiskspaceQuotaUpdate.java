@@ -18,9 +18,13 @@
 package org.apache.hadoop.hdfs.server.namenode;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.List;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.ContentSummary;
@@ -31,12 +35,23 @@ import org.apache.hadoop.hdfs.DFSOutputStream;
 import org.apache.hadoop.hdfs.DFSTestUtil;
 import org.apache.hadoop.hdfs.DistributedFileSystem;
 import org.apache.hadoop.hdfs.MiniDFSCluster;
+import org.apache.hadoop.hdfs.TestFileCreation;
 import org.apache.hadoop.hdfs.client.HdfsDataOutputStream;
 import org.apache.hadoop.hdfs.protocol.DSQuotaExceededException;
+import org.apache.hadoop.hdfs.server.datanode.DataNodeTestUtils;
+import org.apache.hadoop.hdfs.server.namenode.snapshot.Snapshot;
+import org.apache.hadoop.hdfs.protocolPB.DatanodeProtocolClientSideTranslatorPB;
+import org.apache.hadoop.hdfs.server.protocol.DatanodeRegistration;
+import org.apache.hadoop.hdfs.server.protocol.StorageReceivedDeletedBlocks;
+import org.apache.hadoop.test.GenericTestUtils;
+import org.apache.hadoop.test.GenericTestUtils.LogCapturer;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+import org.mockito.Mockito;
+import org.mockito.invocation.InvocationOnMock;
+import org.mockito.stubbing.Answer;
 
 public class TestDiskspaceQuotaUpdate {
   private static final int BLOCKSIZE = 1024;
@@ -66,6 +81,10 @@ public class TestDiskspaceQuotaUpdate {
     if (cluster != null) {
       cluster.shutdown();
     }
+  }
+
+  private Path getParent(String testName) {
+    return new Path(dir, testName);
   }
 
   /**
@@ -224,4 +243,193 @@ public class TestDiskspaceQuotaUpdate {
     dfs.recoverLease(file);
     cluster.restartNameNodes();
   }
+
+  /**
+   * Check whether the quota is initialized correctly.
+   */
+  @Test
+  public void testQuotaInitialization() throws Exception {
+    final int size = 500;
+    Path testDir = new Path("/testDir");
+    long expectedSize = 3 * BLOCKSIZE + BLOCKSIZE/2;
+    dfs.mkdirs(testDir);
+    dfs.setQuota(testDir, size*4, expectedSize*size*2);
+
+    Path[] testDirs = new Path[size];
+    for (int i = 0; i < size; i++) {
+      testDirs[i] = new Path(testDir, "sub" + i);
+      dfs.mkdirs(testDirs[i]);
+      dfs.setQuota(testDirs[i], 100, 1000000);
+      DFSTestUtil.createFile(dfs, new Path(testDirs[i], "a"), expectedSize,
+          (short)1, 1L);
+    }
+
+    // Directly access the name system to obtain the current cached usage.
+    INodeDirectory root = fsdir.getRoot();
+    HashMap<String, Long> nsMap = new HashMap<String, Long>();
+    HashMap<String, Long> dsMap = new HashMap<String, Long>();
+    scanDirsWithQuota(root, nsMap, dsMap, false);
+
+    FSImage.updateCountForQuota(root, 1);
+    scanDirsWithQuota(root, nsMap, dsMap, true);
+
+    FSImage.updateCountForQuota(root, 2);
+    scanDirsWithQuota(root, nsMap, dsMap, true);
+
+    FSImage.updateCountForQuota(root, 4);
+    scanDirsWithQuota(root, nsMap, dsMap, true);
+  }
+
+  private void scanDirsWithQuota(INodeDirectory dir,
+      HashMap<String, Long> nsMap,
+      HashMap<String, Long> dsMap, boolean verify) {
+    if (dir.isQuotaSet()) {
+      // get the current consumption
+      Quota.Counts q = dir.getDirectoryWithQuotaFeature().getSpaceConsumed();
+      String name = dir.getFullPathName();
+      if (verify) {
+        assertEquals(nsMap.get(name).longValue(), q.get(Quota.NAMESPACE));
+        assertEquals(dsMap.get(name).longValue(), q.get(Quota.DISKSPACE));
+      } else {
+        nsMap.put(name, Long.valueOf(q.get(Quota.NAMESPACE)));
+        dsMap.put(name, Long.valueOf(q.get(Quota.DISKSPACE)));
+      }
+    }
+
+    for (INode child : dir.getChildrenList(Snapshot.CURRENT_STATE_ID)) {
+      if (child instanceof INodeDirectory) {
+        scanDirsWithQuota((INodeDirectory)child, nsMap, dsMap, verify);
+      }
+    }
+  }
+
+  /**
+   * Test that the cached quota stays correct between the COMMIT
+   * and COMPLETE block steps, even if the replication factor is
+   * changed during this time.
+   */
+  @Test (timeout=60000)
+  public void testQuotaIssuesWhileCommitting() throws Exception {
+    // We want a one-DN cluster so that we can force a lack of
+    // commit by only instrumenting a single DN; we kill the other 3
+    List<MiniDFSCluster.DataNodeProperties> dnprops =
+        new ArrayList<MiniDFSCluster.DataNodeProperties>();
+    try {
+      for (int i = REPLICATION - 1; i > 0; i--) {
+        dnprops.add(cluster.stopDataNode(i));
+      }
+
+      DatanodeProtocolClientSideTranslatorPB nnSpy =
+          DataNodeTestUtils.spyOnBposToNN(
+              cluster.getDataNodes().get(0), cluster.getNameNode());
+
+      testQuotaIssuesWhileCommittingHelper(nnSpy, (short) 1, (short) 4);
+      testQuotaIssuesWhileCommittingHelper(nnSpy, (short) 4, (short) 1);
+
+      // Don't actually change replication; just check that the sizes
+      // agree during the commit period
+      testQuotaIssuesWhileCommittingHelper(nnSpy, (short) 1, (short) 1);
+    } finally {
+      for (MiniDFSCluster.DataNodeProperties dnprop : dnprops) {
+        cluster.restartDataNode(dnprop, true);
+      }
+      cluster.waitActive();
+    }
+  }
+
+  private void testQuotaIssuesWhileCommittingHelper(
+      DatanodeProtocolClientSideTranslatorPB nnSpy,
+      final short initialReplication, final short finalReplication)
+      throws Exception {
+    final String logStmt =
+        "BUG: Inconsistent storagespace for directory";
+    final Path dir = new Path(getParent(GenericTestUtils.getMethodName()),
+        String.format("%d-%d", initialReplication, finalReplication));
+    final Path file = new Path(dir, "testfile");
+
+    LogCapturer logs =
+        LogCapturer.captureLogs(NameNode.LOG);
+
+    Mockito.doAnswer(new Answer<Object>() {
+      @Override
+      public Object answer(InvocationOnMock invocation) throws Throwable {
+        if (finalReplication != initialReplication) {
+          dfs.setReplication(file, finalReplication);
+        }
+        // Call getContentSummary before the DN can notify the NN
+        // that the block has been received to check for discrepancy
+        dfs.getContentSummary(dir);
+        invocation.callRealMethod();
+        return null;
+      }
+      }).when(nnSpy).blockReceivedAndDeleted(
+        Mockito.<DatanodeRegistration>anyObject(),
+        Mockito.anyString(),
+        Mockito.<StorageReceivedDeletedBlocks[]>anyObject()
+      );
+
+    dfs.mkdirs(dir);
+    dfs.setQuota(dir, Long.MAX_VALUE - 1, Long.MAX_VALUE - 1);
+
+    DFSTestUtil.createFile(dfs, file, BLOCKSIZE/2, initialReplication, 1L);
+
+    // Also check for discrepancy after completing the file
+    dfs.getContentSummary(dir);
+    assertFalse(logs.getOutput().contains(logStmt));
+  }
+
+  /**
+   * Test that the cached quota remains correct when the block has been
+   * written to but not yet committed, even if the replication factor
+   * is updated during this time.
+   */
+  private void testQuotaIssuesBeforeCommitting(short initialReplication,
+      short finalReplication) throws Exception {
+    final String logStmt =
+        "BUG: Inconsistent storagespace for directory";
+    final Path dir = new Path(getParent(GenericTestUtils.getMethodName()),
+        String.format("%d-%d", initialReplication, finalReplication));
+    final Path file = new Path(dir, "testfile");
+
+    LogCapturer logs =
+        LogCapturer.captureLogs(NameNode.LOG);
+
+    dfs.mkdirs(dir);
+    dfs.setQuota(dir, Long.MAX_VALUE - 1, Long.MAX_VALUE - 1);
+
+    FSDataOutputStream out =
+        TestFileCreation.createFile(dfs, file, initialReplication);
+    TestFileCreation.writeFile(out, BLOCKSIZE / 2);
+    out.hflush();
+
+    dfs.getContentSummary(dir);
+    if (finalReplication != initialReplication) {
+      // While the block is visible to the NN but has not yet been committed,
+      // change the replication
+      dfs.setReplication(file, finalReplication);
+    }
+
+    out.close();
+
+    dfs.getContentSummary(dir);
+    assertFalse(logs.getOutput().contains(logStmt));
+  }
+
+  @Test (timeout=60000)
+  public void testCachedComputedSizesAgreeBeforeCommitting() throws Exception {
+    // Don't actually change replication; just check that the sizes
+    // agree before the commit period
+    testQuotaIssuesBeforeCommitting((short)1, (short)1);
+  }
+
+  @Test (timeout=60000)
+  public void testDecreaseReplicationBeforeCommitting() throws Exception {
+    testQuotaIssuesBeforeCommitting((short)4, (short)1);
+  }
+
+  @Test (timeout=60000)
+  public void testIncreaseReplicationBeforeCommitting() throws Exception {
+    testQuotaIssuesBeforeCommitting((short)1, (short)4);
+  }
+
 }
