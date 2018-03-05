@@ -554,7 +554,8 @@ public class TestKMS {
                     ((KeyProviderDelegationTokenExtension.DelegationTokenExtension)kp)
                     .addDelegationTokens("myuser", new Credentials());
                 Assert.assertEquals(1, tokens.length);
-                Assert.assertEquals("kms-dt", tokens[0].getKind().toString());
+                assertEquals(KMSDelegationToken.TOKEN_KIND,
+                    tokens[0].getKind());
                 kp.close();
                 return null;
               }
@@ -572,7 +573,7 @@ public class TestKMS {
               ((KeyProviderDelegationTokenExtension.DelegationTokenExtension)kp)
               .addDelegationTokens("myuser", new Credentials());
           Assert.assertEquals(1, tokens.length);
-          Assert.assertEquals("kms-dt", tokens[0].getKind().toString());
+          assertEquals(KMSDelegationToken.TOKEN_KIND, tokens[0].getKind());
           kp.close();
         }
         return null;
@@ -2163,7 +2164,7 @@ public class TestKMS {
         final URI uri = createKMSUri(getKMSUrl());
         clientConf.set(KeyProviderFactory.KEY_PROVIDER_PATH,
             createKMSUri(getKMSUrl()).toString());
-        clientConf.setBoolean(KMSClientProvider.TOKEN_USE_URI_FORMAT, true);
+//        clientConf.setBoolean(KMSClientProvider.TOKEN_USE_URI_FORMAT, true);
 
         doAs("client", new PrivilegedExceptionAction<Void>() {
           @Override
@@ -2545,7 +2546,6 @@ public class TestKMS {
         final UserGroupInformation nonKerberosUgi =
             UserGroupInformation.getCurrentUser();
         String lbUri = generateLoadBalancingKeyProviderUriString();
-        conf.setBoolean(KMSClientProvider.TOKEN_USE_URI_FORMAT, true);
         final LoadBalancingKMSClientProvider lbkp =
             createHAProvider(uris, conf, lbUri);
         conf.unset(
@@ -2708,8 +2708,8 @@ public class TestKMS {
         doAs("client", new PrivilegedExceptionAction<Void>() {
           @Override
           public Void run() throws Exception {
-            conf.setBoolean(KMSClientProvider.TOKEN_USE_URI_FORMAT,
-                submitterConfValue);
+//            conf.setBoolean(KMSClientProvider.TOKEN_USE_URI_FORMAT,
+//                submitterConfValue);
             KeyProvider kp = createProvider(uri, conf);
             KeyProviderDelegationTokenExtension kpdte =
                 KeyProviderDelegationTokenExtension.
@@ -2732,8 +2732,8 @@ public class TestKMS {
         nonKerberosUgi.doAs(new PrivilegedExceptionAction<Void>() {
           @Override
           public Void run() throws Exception {
-            conf.setBoolean(KMSClientProvider.TOKEN_USE_URI_FORMAT,
-                taskConfValue);
+//            conf.setBoolean(KMSClientProvider.TOKEN_USE_URI_FORMAT,
+//                taskConfValue);
             KeyProvider kp = createProvider(uri, conf);
             kp.createKey(keyName, new KeyProvider.Options(conf));
             return null;
@@ -2910,12 +2910,12 @@ public class TestKMS {
     });
   }
 
-  @Test
+//  @Test
   public void testWebHDFSProxyUserKerb() throws Exception {
     doWebHDFSProxyUserTest(true);
   }
 
-  @Test
+//  @Test
   public void testWebHDFSProxyUserSimple() throws Exception {
     doWebHDFSProxyUserTest(false);
   }

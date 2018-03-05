@@ -27,7 +27,10 @@ import org.apache.hadoop.security.token.delegation.web.DelegationTokenIdentifier
 @InterfaceAudience.Private
 public final class KMSDelegationToken {
 
-  public static final String TOKEN_KIND_STR = "kms-dt";
+  public static final String TOKEN_LEGACY_KIND_STR = "kms-dt";
+  public static final Text TOKEN_LEGACY_KIND = new Text(TOKEN_LEGACY_KIND_STR);
+
+  public static final String TOKEN_KIND_STR = "KMS_DELEGATION_TOKEN";
   public static final Text TOKEN_KIND = new Text(TOKEN_KIND_STR);
 
   // Utility class is not supposed to be instantiated.

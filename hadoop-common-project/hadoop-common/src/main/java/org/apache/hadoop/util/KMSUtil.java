@@ -235,13 +235,12 @@ public final class KMSUtil {
           "in tests.", tokenServiceValue);
       return kp;
     }
-    // If we are unable to create key provider from the token service field
-    // then return null.
-    URI tokenServiceUri = null;
+    URI tokenServiceUri;
     try {
       tokenServiceUri = new URI(tokenServiceValue);
-    } catch (URISyntaxException use) {
+    } catch (URISyntaxException e) {
       return null;
+//      throw new IOException("Invalid token service " + tokenServiceValue, e);
     }
     return createKeyProviderFromUri(conf, tokenServiceUri);
   }
