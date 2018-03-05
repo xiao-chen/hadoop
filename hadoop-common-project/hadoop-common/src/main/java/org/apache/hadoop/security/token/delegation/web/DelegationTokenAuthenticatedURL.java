@@ -300,9 +300,7 @@ public class DelegationTokenAuthenticatedURL extends AuthenticatedURL {
             creds.getAllTokens());
       }
       if (!creds.getAllTokens().isEmpty()) {
-        InetSocketAddress serviceAddr = new InetSocketAddress(url.getHost(),
-            url.getPort());
-        Text service = SecurityUtil.buildTokenService(serviceAddr);
+        Text service = getDelegationTokenService(url, creds);
         dToken = creds.getToken(service);
         LOG.debug("Using delegation token {} from service:{}", dToken, service);
         if (dToken != null) {
@@ -338,6 +336,13 @@ public class DelegationTokenAuthenticatedURL extends AuthenticatedURL {
           dToken.encodeToUrlString());
     }
     return conn;
+  }
+
+  @InterfaceAudience.Private
+  public Text getDelegationTokenService(URL url, Credentials creds) {
+    InetSocketAddress serviceAddr = new InetSocketAddress(url.getHost(),
+        url.getPort());
+    return SecurityUtil.buildTokenService(serviceAddr);
   }
 
   /**
