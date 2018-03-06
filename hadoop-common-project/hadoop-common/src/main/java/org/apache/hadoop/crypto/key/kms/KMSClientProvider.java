@@ -100,7 +100,7 @@ import static org.apache.hadoop.util.KMSUtil.parseJSONMetadata;
 public class KMSClientProvider extends KeyProvider implements CryptoExtension,
     KeyProviderDelegationTokenExtension.DelegationTokenExtension {
 
-  private static final Logger LOG =
+  public static final Logger LOG =
       LoggerFactory.getLogger(KMSClientProvider.class);
 
   private static final String INVALID_SIGNATURE = "Invalid signature";
@@ -121,6 +121,10 @@ public class KMSClientProvider extends KeyProvider implements CryptoExtension,
 
 
   private static final String CONFIG_PREFIX = "hadoop.security.kms.client.";
+
+  public static final String COPY_LEGACY_TOKEN =
+      CONFIG_PREFIX + "copy.legacy.token";
+  public static final boolean COPY_LEGACY_TOKEN_DEFAULT = true;
 
   /* Number of times to retry authentication in the event of auth failure
    * (normally happens due to stale authToken) 
@@ -144,6 +148,7 @@ public class KMSClientProvider extends KeyProvider implements CryptoExtension,
    */
   private final Text dtService;
   private final Text providerUriText;
+  private final boolean copyLegacyToken;
 
   private class EncryptedQueueRefiller implements
     ValueQueue.QueueRefiller<EncryptedKeyVersion> {
@@ -317,6 +322,8 @@ public class KMSClientProvider extends KeyProvider implements CryptoExtension,
             CommonConfigurationKeysPublic.KMS_CLIENT_TIMEOUT_SECONDS,
             CommonConfigurationKeysPublic.KMS_CLIENT_TIMEOUT_DEFAULT);
     authRetry = conf.getInt(AUTH_RETRY, DEFAULT_AUTH_RETRY);
+    copyLegacyToken =
+        conf.getBoolean(COPY_LEGACY_TOKEN, COPY_LEGACY_TOKEN_DEFAULT);
 
     configurator = new TimeoutConnConfigurator(timeout, sslFactory);
     encKeyVersionQueue =
@@ -1009,6 +1016,15 @@ public class KMSClientProvider extends KeyProvider implements CryptoExtension,
           LOG.debug("New token received: ({})", token);
           token.setService(dtService);
           credentials.addToken(token.getService(), token);
+          if (copyLegacyToken) {
+            Token<?> legacyToken = token.copyToken();
+            legacyToken.setKind(KMSDelegationToken.TOKEN_LEGACY_KIND);
+            final InetSocketAddress addr =
+                new InetSocketAddress(kmsUrl.getHost(), kmsUrl.getPort());
+            final Text fallBackServiceText = SecurityUtil.buildTokenService(addr);
+            legacyToken.setService(fallBackServiceText);
+            credentials.addToken(legacyToken.getService(), legacyToken);
+          }
           tokens = new Token<?>[] { token };
         } else {
           throw new IOException("Got NULL as delegation token");

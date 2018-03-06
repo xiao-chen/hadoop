@@ -143,6 +143,7 @@ extends AbstractDelegationTokenIdentifier>
     setCurrentKeyId(0);
     allKeys.clear();
     setDelegationTokenSeqNum(0);
+    LOG.info("______ clearing tokens", new Exception());
     currentTokens.clear();
   }
   
@@ -563,6 +564,7 @@ extends AbstractDelegationTokenIdentifier>
       throw new AccessControlException(canceller
           + " is not authorized to cancel the token " + formatTokenId(id));
     }
+    LOG.info("______ canceling tokens");
     DelegationTokenInformation info = currentTokens.remove(id);
     if (info == null) {
       throw new InvalidToken("Token not found " + formatTokenId(id));
@@ -623,6 +625,7 @@ extends AbstractDelegationTokenIdentifier>
         long renewDate = entry.getValue().getRenewDate();
         if (renewDate < now) {
           expiredTokens.add(entry.getKey());
+          LOG.info("______ removing expired tokens " + i);
           i.remove();
         }
       }

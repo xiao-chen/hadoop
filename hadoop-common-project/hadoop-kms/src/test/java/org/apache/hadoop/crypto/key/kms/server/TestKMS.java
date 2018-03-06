@@ -45,6 +45,7 @@ import org.apache.hadoop.security.ssl.KeyStoreTestUtil;
 import org.apache.hadoop.security.ssl.SSLFactory;
 import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.security.token.TokenIdentifier;
+import org.apache.hadoop.security.token.delegation.web.DelegationTokenAuthenticationHandler;
 import org.apache.hadoop.security.token.delegation.web.DelegationTokenIdentifier;
 import org.apache.hadoop.test.GenericTestUtils;
 import org.apache.hadoop.util.KMSUtilFaultInjector;
@@ -119,6 +120,8 @@ public class TestKMS {
 
   @Before
   public void setUp() throws Exception {
+    GenericTestUtils.setLogLevel(KMSClientProvider.LOG, Level.TRACE);
+    GenericTestUtils.setLogLevel(DelegationTokenAuthenticationHandler.LOG, Level.TRACE);
     setUpMiniKdc();
     // resetting kerberos security
     Configuration conf = new Configuration();
@@ -2183,7 +2186,7 @@ public class TestKMS {
             final Token<?>[] tokens =
                 kpdte.addDelegationTokens("client1", credentials);
             Text tokenService = getTokenService(kp);
-            Assert.assertEquals(1, credentials.getAllTokens().size());
+            Assert.assertEquals(2, credentials.getAllTokens().size());
             Assert.assertEquals(KMSDelegationToken.TOKEN_KIND,
                 credentials.getToken(tokenService).getKind());
 
@@ -2328,7 +2331,7 @@ public class TestKMS {
             final Credentials credentials = new Credentials();
             kpdte.addDelegationTokens("client", credentials);
             Text tokenService = getTokenService(kp);
-            Assert.assertEquals(1, credentials.getAllTokens().size());
+            Assert.assertEquals(2, credentials.getAllTokens().size());
             Assert.assertEquals(KMSDelegationToken.TOKEN_KIND, credentials.
                 getToken(tokenService).getKind());
             UserGroupInformation.getCurrentUser().addCredentials(credentials);
@@ -2373,7 +2376,7 @@ public class TestKMS {
             final Credentials newCreds = new Credentials();
             kpdte.addDelegationTokens("client", newCreds);
             Text tokenService = getTokenService(kp);
-            Assert.assertEquals(1, newCreds.getAllTokens().size());
+            Assert.assertEquals(2, newCreds.getAllTokens().size());
             Assert.assertEquals(KMSDelegationToken.TOKEN_KIND,
                 newCreds.getToken(tokenService).
                     getKind());
@@ -2397,7 +2400,7 @@ public class TestKMS {
             }
 
             // Using the new DT should succeed.
-            Assert.assertEquals(1, newCreds.getAllTokens().size());
+            Assert.assertEquals(2, newCreds.getAllTokens().size());
             Assert.assertEquals(KMSDelegationToken.TOKEN_KIND,
                 newCreds.getToken(tokenService).
                     getKind());
@@ -2559,7 +2562,7 @@ public class TestKMS {
                 KeyProviderDelegationTokenExtension kpdte =
                     KeyProviderDelegationTokenExtension.
                         createKeyProviderDelegationTokenExtension(lbkp);
-                kpdte.addDelegationTokens("foo", credentials);
+                kpdte.addDelegationTokens("SET_KEY_MATERIAL", credentials);
                 return null;
               }
             });
@@ -2588,47 +2591,49 @@ public class TestKMS {
             return null;
           }
         });
-        KMSUtilFaultInjector oldInjector = KMSUtilFaultInjector.get();
-        KMSUtilFaultInjector injector = new KMSUtilFaultInjector() {
-          @Override
-          public KeyProvider createKeyProviderForTests(String value,
-                                                       Configuration conf)
-              throws IOException {
-            return TestKMS.createKeyProviderForTests(value, conf);
-          }
-        };
-        KMSUtilFaultInjector.set(injector);
+
+        conf.set(CommonConfigurationKeysPublic.HADOOP_SECURITY_KEY_PROVIDER_PATH,
+            lbUri);
         final Collection<Token<? extends TokenIdentifier>> tokens =
             credentials.getAllTokens();
-        doAs("foo", new PrivilegedExceptionAction<Void>() {
+        doAs("SET_KEY_MATERIAL", new PrivilegedExceptionAction<Void>() {
           @Override
           public Void run() throws Exception {
             boolean renewed = false;
-            Assert.assertEquals(1, tokens.size());
-            Token token = tokens.iterator().next();
-            Assert.assertEquals(KMSDelegationToken.TOKEN_KIND,
-                token.getKind());
-            LOG.info("Got dt for " + token.getService().toString() + "; " + token);
-            long tokenLife = token.renew(conf);
-            LOG.info("Renewed token of kind {}, new lifetime:{}",
-                token.getKind(), tokenLife);
-            Thread.sleep(10);
-            long newTokenLife = token.renew(conf);
-            LOG.info("Renewed token of kind {}, new lifetime:{}",
-                token.getKind(), newTokenLife);
-            Assert.assertTrue(newTokenLife > tokenLife);
+            Assert.assertEquals(2, tokens.size());
+            for (Token token : tokens) {
+//              if (!KMSDelegationToken.TOKEN_KIND.equals(token.getKind())) {
+//                continue;
+//              }
+              LOG.info("Got dt for " + token.getService().toString() + "; " + token);
+              long tokenLife = token.renew(conf);
+              LOG.info("Renewed token of kind {}, new lifetime:{}", token.getKind(), tokenLife);
+              Thread.sleep(10);
+              long newTokenLife = token.renew(conf);
+              LOG.info("Renewed token of kind {}, new lifetime:{}", token.getKind(), newTokenLife);
+              Assert.assertTrue(newTokenLife > tokenLife);
+              renewed = true;
+            }
+            assertTrue("Token should have been renewed", renewed);
 
-            // test delegation token cancellation
-            LOG.info("Got dt for " + token.getService().toString()
-                + "; " + token);
-            token.cancel(conf);
-            LOG.info("Cancelled token of kind {}", token.getKind());
-            try {
-              token.renew(conf);
-              Assert
-                  .fail("should not be able to renew a canceled token");
-            } catch (Exception e) {
-              LOG.info("Expected exception when renewing token", e);
+            boolean canceled = false;
+            for (Token token : tokens) {
+              if (!KMSDelegationToken.TOKEN_KIND.equals(token.getKind())) {
+                continue;
+              }
+              // test delegation token cancellation
+              LOG.info("Got dt for " + token.getService().toString() + "; " + token);
+              if (!canceled) {
+                token.cancel(conf);
+                LOG.info("Cancelled token of kind {}", token.getKind());
+                canceled = true;
+              }
+              try {
+                token.renew(conf);
+                Assert.fail("should not be able to renew a canceled token");
+              } catch (Exception e) {
+                LOG.info("Expected exception when renewing token", e);
+              }
             }
             return null;
           }
@@ -2642,49 +2647,78 @@ public class TestKMS {
                 KeyProviderDelegationTokenExtension kpdte =
                     KeyProviderDelegationTokenExtension.
                         createKeyProviderDelegationTokenExtension(lbkp);
-                kpdte.addDelegationTokens("foo", newCredentials);
+                kpdte.addDelegationTokens("SET_KEY_MATERIAL", newCredentials);
                 return null;
               }
             });
 
-        doAs("foo", new PrivilegedExceptionAction<Void>() {
+//        conf.set(KeyAuthorizationKeyProvider.KEY_ACL + "k0.ALL", "*");
+        doAs("SET_KEY_MATERIAL", new PrivilegedExceptionAction<Void>() {
           @Override
           public Void run() throws Exception {
             KMSClientProvider kp1 = lbkp.getProviders()[0];
-            URL[] urls = getKMSHAUrl();
             final Collection<Token<? extends TokenIdentifier>> tokens =
                 newCredentials.getAllTokens();
-            Assert.assertEquals(1, tokens.size());
-            Token token = tokens.iterator().next();
-            Assert.assertEquals(KMSDelegationToken.TOKEN_KIND,
-                token.getKind());
-            // Testing backward compatibility of token renewal and cancellation.
-            // Set the token service to ip:port format and test to renew/cancel.
-            Text text = SecurityUtil.buildTokenService(
-                new InetSocketAddress(urls[0].getHost(), urls[0].getPort()));
-            token.setService(text);
-            conf.set(CommonConfigurationKeysPublic
-                .HADOOP_SECURITY_KEY_PROVIDER_PATH, lbUri);
-            long tokenLife = 0l;
-            for (KMSClientProvider kp : lbkp.getProviders()) {
-              long renewedTokenLife = token.renew(conf);
-              LOG.info("Renewed token of kind {}, new lifetime:{}",
-                  token.getKind(), renewedTokenLife);
-              Assert.assertTrue(renewedTokenLife > tokenLife);
-              tokenLife = renewedTokenLife;
-              Thread.sleep(10);
+            assertEquals(2, tokens.size());
+            for (Token token : tokens) {
+              assertTrue(KMSDelegationToken.TOKEN_KIND.equals(token.getKind())
+                  || KMSDelegationToken.TOKEN_LEGACY_KIND
+                  .equals(token.getKind()));
+              // Testing backward compatibility of token renewal and cancellation.
+              conf.set(CommonConfigurationKeysPublic.HADOOP_SECURITY_KEY_PROVIDER_PATH,
+                  lbUri);
+              long tokenLife = 0l;
+              LOG.info("Got dt for " + token.getService().toString() + "; " + token);
+              for (KMSClientProvider kp : lbkp.getProviders()) {
+                long renewedTokenLife = token.renew(conf);
+                LOG.info("Renewed token of kind {}, new lifetime:{}", token.getKind(), renewedTokenLife);
+                Assert.assertTrue(renewedTokenLife > tokenLife);
+                tokenLife = renewedTokenLife;
+                Thread.sleep(10);
+              }
+
+              final UserGroupInformation tokenUgi = UserGroupInformation
+                  .createUserForTesting("test", new String[] {});
+              tokenUgi.addToken(token);
+
+              // Access KMS using delegation token for authentication, no Kerberos.
+              tokenUgi.doAs(new PrivilegedExceptionAction<Void>() {
+                @Override
+                public Void run() throws Exception {
+                  // Create a kms client with one provider at a time. Must use one
+                  // provider so that if it fails to authenticate, it does not fall
+                  // back to the next KMS instance.
+
+                  // It should succeed because it has delegation tokens for any
+                  // KMS instances.
+                  for (KMSClientProvider provider : lbkp.getProviders()) {
+                    KeyVersion kv = provider.rollNewVersion("k0");
+                    LOG.info("Rolled k0 " + kv);
+                  }
+                  return null;
+                }
+              });
             }
-            token.cancel(conf);
-            try {
-              token.renew(conf);
-              Assert.fail("should not be able to renew a canceled token");
-            } catch (Exception e) {
-              LOG.info("Expected exception when renewing token", e);
+
+
+            boolean canceled = false;
+            for (Token token : tokens) {
+              if (!canceled) {
+                token.cancel(conf);
+                LOG.info("Cancelled token of kind {}", token.getKind());
+                canceled = true;
+              }
+              try {
+                token.renew(conf);
+                Assert.fail("should not be able to renew a canceled token");
+              } catch (Exception e) {
+                LOG.info("Expected exception when renewing token", e);
+              }
             }
             return null;
           }
         });
-        KMSUtilFaultInjector.set(oldInjector);
+//        KMSUtilFaultInjector.set(oldInjector);
         return null;
       }
     };
@@ -2721,10 +2755,10 @@ public class TestKMS {
         URL kmsUrl = getKMSUrl();
         String expectedTokenValue = submitterConfValue ? uri.toString()
             : kmsUrl.getHost() + ":" + kmsUrl.getPort();
-        Assert.assertEquals(1, credentials.getAllTokens().size());
+        Assert.assertEquals(2, credentials.getAllTokens().size());
         Token kmsToken = credentials.getAllTokens().iterator().next();
-        Assert.assertEquals(KMSDelegationToken.TOKEN_KIND_STR,
-            kmsToken.getKind().toString());
+        assertTrue(kmsToken.getKind().equals(KMSDelegationToken.TOKEN_KIND)
+        ||kmsToken.getKind().equals(KMSDelegationToken.TOKEN_LEGACY_KIND));
         Assert.assertEquals(expectedTokenValue,
             kmsToken.getService().toString());
         nonKerberosUgi.addCredentials(credentials);

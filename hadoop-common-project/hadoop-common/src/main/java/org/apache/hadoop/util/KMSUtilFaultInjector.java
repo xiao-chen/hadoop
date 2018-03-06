@@ -42,8 +42,8 @@ public class KMSUtilFaultInjector {
     instance = injector;
   }
 
-  public KeyProvider createKeyProviderForTests(String value, Configuration conf)
-      throws IOException {
-    return null;
-  }
+//  public KeyProvider createKeyProviderForTests(String value, Configuration conf)
+//      throws IOException {
+//    return null;
+//  }
 }

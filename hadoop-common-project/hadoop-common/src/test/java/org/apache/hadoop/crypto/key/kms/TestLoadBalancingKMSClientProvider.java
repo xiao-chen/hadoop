@@ -61,17 +61,17 @@ public class TestLoadBalancingKMSClientProvider {
     KMSUtilFaultInjector.set(new KMSUtilFaultInjector());
   }
 
-  private void setKMSUtilFaultInjector() {
-    KMSUtilFaultInjector injector = new KMSUtilFaultInjector() {
-      @Override
-      public KeyProvider createKeyProviderForTests(
-          String value, Configuration conf) throws IOException {
-        return TestLoadBalancingKMSClientProvider
-            .createKeyProviderForTests(value, conf);
-      }
-    };
-    KMSUtilFaultInjector.set(injector);
-  }
+//  private void setKMSUtilFaultInjector() {
+//    KMSUtilFaultInjector injector = new KMSUtilFaultInjector() {
+//      @Override
+//      public KeyProvider createKeyProviderForTests(
+//          String value, Configuration conf) throws IOException {
+//        return TestLoadBalancingKMSClientProvider
+//            .createKeyProviderForTests(value, conf);
+//      }
+//    };
+//    KMSUtilFaultInjector.set(injector);
+//  }
 
   private static KeyProvider createKeyProviderForTests(
       String value, Configuration conf) throws IOException {
@@ -108,7 +108,7 @@ public class TestLoadBalancingKMSClientProvider {
     assertEquals(1, providers.length);
     assertEquals(Sets.newHashSet("http://host1:9600/kms/foo/v1/"),
         Sets.newHashSet(providers[0].getKMSUrl()));
-    setKMSUtilFaultInjector();
+//    setKMSUtilFaultInjector();
     String uriStr = "kms://http@host1:9600/kms/foo," +
         "kms://http@host2:9600/kms/foo," +
         "kms://http@host3:9600/kms/foo";

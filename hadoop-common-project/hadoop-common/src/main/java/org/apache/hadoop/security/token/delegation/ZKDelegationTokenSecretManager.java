@@ -485,6 +485,7 @@ public abstract class ZKDelegationTokenSecretManager<TokenIdent extends Abstract
     TokenIdent ident = createIdentifier();
     ident.readFields(din);
     synchronized (this) {
+      LOG.info("_______ removing " + ident);
       currentTokens.remove(ident);
       // The cancel task might be waiting
       notifyAll();
@@ -682,6 +683,7 @@ public abstract class ZKDelegationTokenSecretManager<TokenIdent extends Abstract
       if (tokenInfo != null && !currentTokens.containsKey(ident)) {
         currentTokens.put(ident, tokenInfo);
       } else if (tokenInfo == null && currentTokens.containsKey(ident)) {
+        LOG.info("_______ removing " + ident);
         currentTokens.remove(ident);
       }
     } catch (IOException e) {

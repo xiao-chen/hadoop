@@ -25,6 +25,7 @@ import org.apache.hadoop.crypto.key.KeyProviderCryptoExtension.EncryptedKeyVersi
 import org.apache.hadoop.crypto.key.KeyProviderFactory;
 import org.apache.hadoop.crypto.key.kms.KMSClientProvider;
 import org.apache.hadoop.crypto.key.kms.KMSRESTConstants;
+import org.apache.hadoop.fs.CommonConfigurationKeysPublic;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -42,8 +43,7 @@ import java.util.Map;
  */
 @InterfaceAudience.Private
 public final class KMSUtil {
-  public static final Logger LOG =
-      LoggerFactory.getLogger(KMSUtil.class);
+  public static final Logger LOG = LoggerFactory.getLogger(KMSUtil.class);
 
   private KMSUtil() { /* Hidden constructor */ }
 
@@ -65,13 +65,13 @@ public final class KMSUtil {
     if (providerUriStr == null || providerUriStr.isEmpty()) {
       return null;
     }
-    KeyProvider kp = KMSUtilFaultInjector.get().createKeyProviderForTests(
-        providerUriStr, conf);
-    if (kp != null) {
-      LOG.info("KeyProvider is created with uri: {}. This should happen only " +
-              "in tests.", providerUriStr);
-      return kp;
-    }
+//    KeyProvider kp = KMSUtilFaultInjector.get().createKeyProviderForTests(
+//        providerUriStr, conf);
+//    if (kp != null) {
+//      LOG.info("KeyProvider is created with uri: {}. This should happen only " +
+//              "in tests.", providerUriStr);
+//      return kp;
+//    }
     return createKeyProviderFromUri(conf, URI.create(providerUriStr));
   }
 
@@ -228,19 +228,24 @@ public final class KMSUtil {
       LOG.debug("Creating key provider with token service value  " +
           tokenServiceValue);
     }
-    KeyProvider kp = KMSUtilFaultInjector.get().createKeyProviderForTests(
-        tokenServiceValue, conf);
-    if (kp != null) {
-      LOG.info("KeyProvider is created with uri: {}. This should happen only " +
-          "in tests.", tokenServiceValue);
-      return kp;
+//    KeyProvider kp = KMSUtilFaultInjector.get().createKeyProviderForTests(
+//        tokenServiceValue, conf);
+//    if (kp != null) {
+//      LOG.info("KeyProvider is created with uri: {}. This should happen only " +
+//          "in tests.", tokenServiceValue);
+//      return kp;
+//    }
+    if (!tokenServiceValue.contains("://")) {
+      LOG.info("Falling back to create key provider from configuration"
+          + " because service {} is not a URL.", tokenServiceValue);
+      return KMSUtil.createKeyProvider(conf,
+          CommonConfigurationKeysPublic.HADOOP_SECURITY_KEY_PROVIDER_PATH);
     }
     URI tokenServiceUri;
     try {
       tokenServiceUri = new URI(tokenServiceValue);
     } catch (URISyntaxException e) {
-      return null;
-//      throw new IOException("Invalid token service " + tokenServiceValue, e);
+      throw new IOException("Invalid token service " + tokenServiceValue, e);
     }
     return createKeyProviderFromUri(conf, tokenServiceUri);
   }
